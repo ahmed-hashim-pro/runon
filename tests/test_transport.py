@@ -127,3 +127,12 @@ class TestFakeResponses:
         fake = FakeTransport(default_exit=1)
 
         assert not fake.run(Host(name="a", address="a"), "anything").ok
+
+    def test_it_covers_everything_the_remote_path_calls(self):
+        """--watch reaches for ssh_argv, which the Transport protocol does not
+        declare; rehearsing a watch run used to raise AttributeError here."""
+        from runon.transport import FakeTransport
+
+        fake = FakeTransport()
+        for method in ("run", "copy", "ssh_argv"):
+            assert callable(getattr(fake, method, None)), method
