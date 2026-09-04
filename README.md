@@ -303,6 +303,13 @@ fake.calls    # [("web-1", "cd ~/.runon/programs/... && ./main.sh")]
 fake.copies   # what would have been shipped
 ```
 
+Script a failure to check the half that matters — `responses` matches on a
+substring of the command, first match wins, and `default_exit` fails everything:
+
+```python
+fake = FakeTransport(responses={"migrate": Result("", "", 1, "", "lock held")})
+```
+
 ## Writing programs
 
 Conventions that keep this pleasant, learned the hard way:
