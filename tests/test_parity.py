@@ -152,8 +152,13 @@ class TestCompletion:
         assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
 
     def test_every_scope_is_offered(self):
-        for scope in ("local", "host", "group", "list", "init", "doctor"):
-            assert scope in script("bash")
+        # read off the parser, so adding a command cannot leave completion behind
+        subcommands = next(
+            action for action in cli.build_parser()._actions if hasattr(action, "choices")
+            and action.choices and action.dest == "scope"
+        )
+        for scope in subcommands.choices:
+            assert scope in script("bash"), scope
 
 
 class TestNamePicker:

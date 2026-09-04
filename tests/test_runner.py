@@ -7,8 +7,11 @@ real.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from runon import runner
 from runon.inventory import Host
+from runon.program import Workspace
 from runon.transport import FakeTransport, Result
 
 WEB1 = Host(name="web-1", address="web-1.example.com", user="deploy", vars={"role": "web"})
@@ -122,3 +125,26 @@ class TestFanOut:
 
         # copy_program does two copies; the host is only ok if both were
         assert runner.fan_out([WEB1], work)[0].exit_code == 7
+
+
+def test_a_relative_workspace_still_finds_its_functions(tmp_path, monkeypatch):
+    """`runon -C examples` runs a program that sources a function."""
+    from runon.scaffold import write_workspace
+    from runon.transport import LocalTransport
+
+    write_workspace(tmp_path / "ops")
+    monkeypatch.chdir(tmp_path)
+    workspace = Workspace(root=Path("ops"))
+
+    result = LocalTransport().run(Host("local", "localhost"), "true")
+    assert result.ok  # the transport itself is fine; the paths are the question
+
+    result = runner.run_program(
+        LocalTransport(),
+        Host("local", "localhost"),
+        workspace,
+        workspace.program("hello-world"),
+        remote=False,
+    )
+
+    assert result.ok, result.stderr

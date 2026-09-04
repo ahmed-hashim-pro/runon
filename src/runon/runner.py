@@ -97,8 +97,11 @@ def run_program(
         directory = remote_program_dir(program.name)
         functions_dir = f"{REMOTE_ROOT}/functions"
     else:
-        directory = shlex.quote(str(program.path))
-        functions_dir = str(workspace.functions_path)
+        # Absolute, because the command below cds into the program directory
+        # first: a relative path from `runon -C examples` would be resolved
+        # against the wrong place by the time the program reads it.
+        directory = shlex.quote(str(program.path.resolve()))
+        functions_dir = str(workspace.functions_path.resolve())
 
     argv = " ".join(shlex.quote(a) for a in (args or []))
     command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; ./{ENTRY_POINT}"

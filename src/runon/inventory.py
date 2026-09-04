@@ -77,15 +77,13 @@ def _looks_like_address(value: str) -> bool:
     return "@" in value or "." in value or value == "localhost"
 
 
-def load(path: Path | None = None, *, start: Path | None = None) -> Inventory:
+def load(path: Path | None = None) -> Inventory:
     """Reads an inventory, or returns an empty one when there is no file.
 
     An absent inventory is not an error: running programs on the local machine
     needs no hosts at all, and requiring a config file to do that would be
     friction for no reason.
     """
-    if path is None:
-        path = find(start or Path.cwd())
     if path is None:
         return Inventory(hosts={}, groups={})
     if not path.is_file():
@@ -97,15 +95,6 @@ def load(path: Path | None = None, *, start: Path | None = None) -> Inventory:
         raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
 
     return _parse(raw, path)
-
-
-def find(start: Path) -> Path | None:
-    """Walks up from `start` looking for an inventory, like git finds .git."""
-    for directory in [start, *start.parents]:
-        candidate = directory / DEFAULT_FILENAME
-        if candidate.is_file():
-            return candidate
-    return None
 
 
 def _parse(raw: dict, source: Path) -> Inventory:

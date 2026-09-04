@@ -9,6 +9,17 @@ from runon.program import Workspace
 from runon.scaffold import write_workspace
 
 
+@pytest.fixture(autouse=True)
+def _home_of_its_own(tmp_path, monkeypatch):
+    """Every test gets its own RUNON_HOME.
+
+    Without this the suite writes a real config to the developer's home
+    directory and silently repoints their workspace — and it would pass on CI,
+    where the home directory is disposable, so nobody would find out there.
+    """
+    monkeypatch.setenv("RUNON_HOME", str(tmp_path / "runon-home"))
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     """A scaffolded workspace, which is also what a new user gets."""

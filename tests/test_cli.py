@@ -503,3 +503,173 @@ class TestWatchWiring:
 
         assert code == 1
         assert "nothing to watch" in err
+
+
+class TestOnePlace:
+    """Programs live in one directory, and the config records which one, so a
+    command means the same thing from every directory on the machine."""
+
+    def test_init_records_the_workspace(self, tmp_path, capsys):
+        from runon import config
+
+        ops = tmp_path / "ops"
+        code, out, _ = run(["init", str(ops)], tmp_path, capsys)
+
+        assert code == 0
+        assert config.workspace().root == ops.resolve()
+        assert str(ops) in out
+
+    def test_programs_are_found_from_an_unrelated_directory(self, tmp_path, capsys):
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        run(["init", str(tmp_path / "ops")], tmp_path, capsys)
+
+        code, out, _ = run(["list", "programs"], elsewhere, capsys)
+
+        assert code == 0
+        assert "hello-world" in out
+
+    def test_the_inventory_comes_from_the_workspace_too(self, tmp_path, inventory_file, capsys):
+        # programs from one directory and hosts from another would be worse
+        # than the wandering this replaced
+        ops = inventory_file.parent
+        run(["init", str(ops)], tmp_path, capsys)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+
+        code, out, _ = run(["list", "hosts"], elsewhere, capsys)
+
+        assert code == 0
+        assert "web-1" in out
+
+    def test_an_inventory_beside_you_is_ignored(self, tmp_path, inventory_file, capsys):
+        run(["init", str(inventory_file.parent)], tmp_path, capsys)
+        stray = tmp_path / "stray"
+        stray.mkdir()
+        (stray / "inventory.toml").write_text(
+            '[hosts.ghost]\naddress = "10.9.9.9"\n', encoding="utf-8"
+        )
+
+        code, out, _ = run(["list", "hosts"], stray, capsys)
+
+        assert code == 0
+        # both halves: the workspace's hosts are read, the one underfoot is not
+        assert "web-1" in out
+        assert "ghost" not in out
+
+    def test_dash_C_overrides_for_one_command(self, tmp_path, capsys):
+        from runon import config
+
+        run(["init", str(tmp_path / "ops")], tmp_path, capsys)
+        other = tmp_path / "other"
+        run(["init", str(other)], tmp_path, capsys)
+        run(["config", "--workspace", str(tmp_path / "ops")], tmp_path, capsys)
+
+        code, _, _ = run(["-C", str(other), "list", "programs"], tmp_path, capsys)
+
+        assert code == 0
+        # the override does not stick
+        assert config.workspace().root == (tmp_path / "ops").resolve()
+
+    def test_repointing_says_what_it_was(self, tmp_path, capsys):
+        first, second = tmp_path / "first", tmp_path / "second"
+        run(["init", str(first)], tmp_path, capsys)
+        code, out, _ = run(["init", str(second)], tmp_path, capsys)
+
+        assert code == 0
+        assert str(second) in out and str(first) in out and "was" in out
+
+    def test_config_shows_where_things_are(self, tmp_path, capsys):
+        from runon import config
+
+        run(["init", str(tmp_path / "ops")], tmp_path, capsys)
+        code, out, _ = run(["config"], tmp_path, capsys)
+
+        assert code == 0
+        assert str(config.path()) in out
+        assert str((tmp_path / "ops").resolve()) in out
+
+    def test_config_refuses_a_directory_that_is_not_a_workspace(self, tmp_path, capsys):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        code, _, err = run(["config", "--workspace", str(empty)], tmp_path, capsys)
+
+        assert code == 2
+        assert "no programs" in err
+
+    def test_before_any_init_it_says_so_rather_than_naming_the_cwd(self, tmp_path, capsys):
+        # "run init here" is wrong advice when you are standing in /
+        code, _, err = run(["local", "run-program", "--program", "x"], tmp_path, capsys)
+
+        assert code == 2
+        assert "no workspace yet" in err
+
+    def test_a_configured_but_empty_workspace_is_a_different_message(self, tmp_path, capsys):
+        ops = tmp_path / "ops"
+        run(["init", str(ops)], tmp_path, capsys)
+        for child in (ops / "programs").iterdir():
+            for f in child.iterdir():
+                f.unlink()
+            child.rmdir()
+
+        code, _, err = run(["local", "run-program", "--program", "x"], tmp_path, capsys)
+
+        assert code == 2
+        assert "configured workspace" in err and str(ops) in err
+
+    def test_a_hand_edited_config_that_is_broken_says_so(self, tmp_path, capsys):
+        from runon import config
+
+        config.path().parent.mkdir(parents=True, exist_ok=True)
+        config.path().write_text('workspace = "/tmp\n', encoding="utf-8")
+
+        code, _, err = run(["list", "programs"], tmp_path, capsys)
+
+        assert code == 2
+        assert "not valid TOML" in err and str(config.path()) in err
+
+    def test_a_workspace_that_is_not_a_path_says_so(self, tmp_path, capsys):
+        from runon import config
+
+        config.path().parent.mkdir(parents=True, exist_ok=True)
+        config.path().write_text("workspace = 42\n", encoding="utf-8")
+
+        code, _, err = run(["list", "programs"], tmp_path, capsys)
+
+        assert code == 2
+        assert "must be a path" in err
+
+    def test_a_broken_config_can_still_be_repaired(self, tmp_path, capsys):
+        """The commands that fix a config must not need it to parse."""
+        from runon import config
+
+        ops = tmp_path / "ops"
+        run(["init", str(ops)], tmp_path, capsys)
+        config.path().write_text('workspace = "/tmp\n', encoding="utf-8")
+
+        assert run(["list", "programs"], tmp_path, capsys)[0] == 2
+
+        assert run(["init", str(ops), "--force"], tmp_path, capsys)[0] == 0
+        assert run(["list", "programs"], tmp_path, capsys)[0] == 0
+
+    def test_config_reports_a_broken_file_instead_of_raising(self, tmp_path, capsys):
+        from runon import config
+
+        config.path().parent.mkdir(parents=True, exist_ok=True)
+        config.path().write_text('workspace = "/tmp\n', encoding="utf-8")
+
+        code, out, _ = run(["config"], tmp_path, capsys)
+
+        assert code == 2
+        assert str(config.path()) in out and "unreadable" in out
+
+    @pytest.mark.parametrize("scope", [["doctor"], ["completion", "bash"]])
+    def test_a_broken_config_does_not_touch_commands_that_need_no_workspace(
+        self, scope, tmp_path, capsys
+    ):
+        from runon import config
+
+        config.path().parent.mkdir(parents=True, exist_ok=True)
+        config.path().write_text('workspace = "/tmp\n', encoding="utf-8")
+
+        assert run(scope, tmp_path, capsys)[0] == 0
