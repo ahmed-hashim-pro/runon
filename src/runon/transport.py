@@ -24,6 +24,10 @@ from typing import Protocol
 from .askpass import askpass_env
 from .inventory import Host
 
+#: Long enough that the several connections one command makes reuse one login,
+#: short enough that a forgotten terminal is not an open door for the afternoon.
+DEFAULT_PERSIST = "60s"
+
 
 @dataclass(frozen=True)
 class Result:
@@ -108,12 +112,16 @@ class SSHTransport:
         timeout: int = 3600,
         connect_timeout: int = 10,
         password: str | None = None,
+        persist: str | None = DEFAULT_PERSIST,
     ) -> None:
         self.timeout = timeout
         self.connect_timeout = connect_timeout
         #: When set, ssh is allowed to authenticate with it. Keys are still
         #: tried first, so a host that has your key never sees the password.
         self.password = password
+        #: How long an authenticated connection is kept open for reuse, or None
+        #: to open a fresh one every time.
+        self.persist = persist
 
     def _base(self, host: Host, binary: str) -> list[str]:
         argv = [binary, "-o", f"ConnectTimeout={self.connect_timeout}"]
@@ -126,6 +134,21 @@ class SSHTransport:
             # One attempt only. Three failed prompts per host turns a wrong
             # password into a very slow way to find that out.
             argv += ["-o", "NumberOfPasswordPrompts=1"]
+
+        if self.persist:
+            # Connection multiplexing. The first command to a host authenticates
+            # and leaves a master connection open; every command after it reuses
+            # that socket and authenticates again never. Without this,
+            # copy-run-program is two authentications per host, and a second
+            # runon command a minute later is another one.
+            #
+            # %C is a hash of the connection parameters, which keeps the socket
+            # path under the ~104 character limit a unix socket has.
+            argv += [
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={_socket_dir()}/%C",
+                "-o", f"ControlPersist={self.persist}",
+            ]
         if host.port:
             # scp spells the port flag differently from ssh, which is a
             # long-standing wart rather than anything clever here.
@@ -173,6 +196,18 @@ class SSHTransport:
                 "&& sudo systemctl restart ssh\n"
             )
         return Result(host.name, label, result.exit_code, result.stdout, stderr)
+
+
+def _socket_dir() -> Path:
+    """Where multiplexed connection sockets live.
+
+    0700, because anyone who can reach one of these sockets can use the
+    authenticated connection behind it without knowing any credential.
+    """
+    directory = Path(os.environ.get("RUNON_HOME", Path.home() / ".runon")) / "sockets"
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    return directory
 
 
 def _looks_like_missing_sftp(stderr: str) -> bool:
