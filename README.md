@@ -165,6 +165,54 @@ One thing worth knowing: OpenSSH 9 moved `scp` onto the SFTP subsystem, so a
 target with SFTP disabled fails a copy with an error that does not say so.
 `runon` detects that and tells you the fix.
 
+## Authentication
+
+`runon` never handles credentials itself for key-based access — it shells out to
+your `ssh`, so your agent, your keys, your `~/.ssh/config` and your `known_hosts`
+all apply unchanged.
+
+**Keys are the default and the recommendation.** Set one up once and you never
+type anything again:
+
+```bash
+ssh-copy-id deploy@web-1
+```
+
+**When you need a password**, ask for one explicitly:
+
+```bash
+runon host  --host root@10.0.0.4   --ask-password run-program --program setup
+runon group --group staging        --ask-password copy-run-program --program deploy
+```
+
+You are prompted **once**, even for a group of twenty — the same credential is
+used for every host in it, and being asked twenty times would be its own
+argument against the feature. Keys are still attempted first, so any host that
+already trusts your key never sees the password.
+
+### How the password reaches ssh
+
+Not through `sshpass`. That would be an extra binary that is not installed by
+default anywhere, and `sshpass -p` puts the password in the process table where
+any user on the machine can read it with `ps`.
+
+Instead `runon` uses OpenSSH's own `SSH_ASKPASS`. The password is written to a
+file only your user can read (`0600`), inside a directory only your user can
+enter (`0700`), and both are deleted when the run ends — including when it ends
+badly. It is never an argument, never an environment variable ssh passes on, and
+never written to the audit of what ran.
+
+Two consequences worth knowing:
+
+- **One attempt per host.** `NumberOfPasswordPrompts=1`, because three failed
+  prompts across twenty machines is a very slow way to learn you typed it wrong.
+- **Without `--ask-password`, ssh is run with `BatchMode=yes`.** A host that
+  does not have your key fails immediately rather than blocking on a prompt —
+  across a group, the alternative is twenty stuck connections and no output.
+
+If hosts in a group have *different* passwords, run them separately. Better: use
+`ssh-copy-id` and stop typing passwords.
+
 ## Testing your programs without servers
 
 Everything that touches another machine goes through one `Transport` interface,
@@ -205,8 +253,8 @@ runon list programs|hosts|groups|layouts
 runon local run-program  [--program P] [args...]
 runon local run-layout   [--layout L]
 
-runon host  --host H  <verb> [--program P] [args...]
-runon group --group G <verb> [--program P] [-j N] [args...]
+runon host  --host H  [--ask-password] <verb> [--program P] [args...]
+runon group --group G [--ask-password] <verb> [--program P] [-j N] [args...]
 ```
 
 ## What this does not do
@@ -223,8 +271,7 @@ runon group --group G <verb> [--program P] [-j N] [args...]
   one.
 
 ## Tests
-
-60 tests. No servers, no SSH keys, no network.
+82 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"

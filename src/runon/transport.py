@@ -13,12 +13,15 @@ half-version of any of it.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from .askpass import askpass_env
 from .inventory import Host
 
 
@@ -99,12 +102,30 @@ class SSHTransport:
 
     name = "ssh"
 
-    def __init__(self, *, timeout: int = 3600, connect_timeout: int = 10) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: int = 3600,
+        connect_timeout: int = 10,
+        password: str | None = None,
+    ) -> None:
         self.timeout = timeout
         self.connect_timeout = connect_timeout
+        #: When set, ssh is allowed to authenticate with it. Keys are still
+        #: tried first, so a host that has your key never sees the password.
+        self.password = password
 
     def _base(self, host: Host, binary: str) -> list[str]:
-        argv = [binary, "-o", f"ConnectTimeout={self.connect_timeout}", "-o", "BatchMode=yes"]
+        argv = [binary, "-o", f"ConnectTimeout={self.connect_timeout}"]
+        if self.password is None:
+            # No password to offer, so refuse to prompt: without this a host
+            # missing your key hangs waiting for input, and across a group that
+            # is twenty stuck connections and no output.
+            argv += ["-o", "BatchMode=yes"]
+        else:
+            # One attempt only. Three failed prompts per host turns a wrong
+            # password into a very slow way to find that out.
+            argv += ["-o", "NumberOfPasswordPrompts=1"]
         if host.port:
             # scp spells the port flag differently from ssh, which is a
             # long-standing wart rather than anything clever here.
@@ -113,26 +134,36 @@ class SSHTransport:
 
     def run(self, host: Host, command: str, *, env: dict[str, str] | None = None) -> Result:
         argv = [*self._base(host, "ssh"), host.ssh_target, _env_prefix(env) + command]
-        try:
-            completed = subprocess.run(argv, capture_output=True, text=True, timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            return Result(host.name, command, 124, "", f"timed out after {self.timeout}s")
-        except FileNotFoundError:
-            return Result(host.name, command, 127, "", "ssh not found on this machine")
-        return Result(host.name, command, completed.returncode, completed.stdout, completed.stderr)
+        return self._invoke(argv, host, command)
+
+    def _invoke(self, argv: list[str], host: Host, label: str) -> Result:
+        """Runs an ssh/scp command, supplying the password if there is one.
+
+        The env built here is for the local ssh process. It is deliberately not
+        the same thing as the env passed to `run`, which describes the remote
+        command — conflating the two would send SSH_ASKPASS to the target.
+        """
+        with ExitStack() as stack:
+            local_env = None
+            if self.password is not None:
+                local_env = {**os.environ, **stack.enter_context(askpass_env(self.password))}
+            try:
+                completed = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=self.timeout, env=local_env
+                )
+            except subprocess.TimeoutExpired:
+                return Result(host.name, label, 124, "", f"timed out after {self.timeout}s")
+            except FileNotFoundError:
+                return Result(host.name, label, 127, "", f"{argv[0]} not found on this machine")
+        return Result(host.name, label, completed.returncode, completed.stdout, completed.stderr)
 
     def copy(self, host: Host, local: Path, remote: str) -> Result:
         argv = [*self._base(host, "scp"), "-r", str(local), f"{host.ssh_target}:{remote}"]
         label = f"copy {local} -> {remote}"
-        try:
-            completed = subprocess.run(argv, capture_output=True, text=True, timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            return Result(host.name, label, 124, "", f"timed out after {self.timeout}s")
-        except FileNotFoundError:
-            return Result(host.name, label, 127, "", "scp not found on this machine")
+        result = self._invoke(argv, host, label)
 
-        stderr = completed.stderr
-        if completed.returncode != 0 and _looks_like_missing_sftp(stderr):
+        stderr = result.stderr
+        if not result.ok and _looks_like_missing_sftp(stderr):
             # OpenSSH 9 moved scp onto the SFTP subsystem, so a target with
             # SFTP disabled fails with an error that does not say so.
             stderr += (
@@ -141,7 +172,7 @@ class SSHTransport:
                 "  echo 'Subsystem sftp internal-sftp' | sudo tee -a /etc/ssh/sshd_config "
                 "&& sudo systemctl restart ssh\n"
             )
-        return Result(host.name, label, completed.returncode, completed.stdout, stderr)
+        return Result(host.name, label, result.exit_code, result.stdout, stderr)
 
 
 def _looks_like_missing_sftp(stderr: str) -> bool:
