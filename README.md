@@ -213,6 +213,40 @@ Two consequences worth knowing:
 If hosts in a group have *different* passwords, run them separately. Better: use
 `ssh-copy-id` and stop typing passwords.
 
+### Not typing it every time
+
+**The real answer is a key.** One `ssh-copy-id` per host and you never type
+anything again — no prompt, no stored secret, no expiry to think about. If you
+find yourself reaching for `--ask-password` twice on the same machine, that is
+the signal.
+
+For everything in between, `runon` reuses connections. The first command to a
+host authenticates and leaves a master connection open; every command after it
+travels down that socket and authenticates **not at all**:
+
+```bash
+runon host --host web-1 --ask-password copy-run-program --program deploy
+runon host --host web-1 run-program --program smoke-test    # no prompt
+```
+
+This is on by default at 60 seconds, which is enough that the several
+connections a single command makes — `copy-run-program` is at least two — share
+one login instead of one each. Stretch it for a working session, or turn it off:
+
+```bash
+runon group --group staging --persist 10m  run-program --program tail-logs
+runon host  --host web-1    --persist no   run-program --program deploy
+```
+
+It is OpenSSH's own `ControlMaster`, so nothing is stored: the state is a live
+socket that closes itself when the timer runs out.
+
+The tradeoff, stated plainly: **while that socket is open, anything that can
+reach it can use your authenticated session without knowing your credential.**
+The sockets live in `~/.runon/sockets` at `0700`, so on a single-user machine
+that means you. On a shared box, or if you step away from an unlocked terminal,
+prefer a short `--persist` — or a key and no password at all.
+
 ## Testing your programs without servers
 
 Everything that touches another machine goes through one `Transport` interface,
@@ -253,8 +287,8 @@ runon list programs|hosts|groups|layouts
 runon local run-program  [--program P] [args...]
 runon local run-layout   [--layout L]
 
-runon host  --host H  [--ask-password] <verb> [--program P] [args...]
-runon group --group G [--ask-password] <verb> [--program P] [-j N] [args...]
+runon host  --host H  [--ask-password] [--persist D] <verb> [--program P] [args...]
+runon group --group G [--ask-password] [--persist D] <verb> [--program P] [-j N] [args...]
 ```
 
 ## What this does not do
@@ -271,7 +305,7 @@ runon group --group G [--ask-password] <verb> [--program P] [-j N] [args...]
   one.
 
 ## Tests
-82 tests. No servers, no SSH keys, no network.
+99 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"

@@ -18,7 +18,7 @@ from .errors import RunonError
 from .picker import choose
 from .program import Workspace
 from .report import emit
-from .transport import LocalTransport, Result, SSHTransport
+from .transport import DEFAULT_PERSIST, LocalTransport, Result, SSHTransport
 
 REMOTE_VERBS = ("copy", "copy-program", "run-program", "copy-run-program")
 
@@ -74,6 +74,15 @@ def _add_auth_args(parser: argparse.ArgumentParser) -> None:
         "--ask-password",
         action="store_true",
         help="prompt for an SSH password (keys are still tried first)",
+    )
+    parser.add_argument(
+        "--persist",
+        default=DEFAULT_PERSIST,
+        metavar="DURATION",
+        help=(
+            "keep authenticated connections open for reuse "
+            f"(default {DEFAULT_PERSIST}; 'no' to disable)"
+        ),
     )
 
 
@@ -197,7 +206,10 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     if not hosts:
         raise RunonError("no hosts selected")
 
-    transport = SSHTransport(password=_password_for(args, hosts))
+    transport = SSHTransport(
+        password=_password_for(args, hosts),
+        persist=_persist_for(args),
+    )
 
     if args.verb == "copy":
         if args.dry_run:
@@ -228,6 +240,14 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
 
     results = runner.fan_out(hosts, work, parallel=parallel)
     return emit(results, verbose=args.verbose)
+
+
+def _persist_for(args) -> str | None:
+    """How long to keep a connection open, or None to open a new one each time."""
+    value = getattr(args, "persist", DEFAULT_PERSIST)
+    if value is None or str(value).lower() in {"no", "none", "off", "0"}:
+        return None
+    return str(value)
 
 
 def _password_for(args, hosts) -> str | None:
