@@ -96,7 +96,10 @@ class TestWatch:
         if expected:
             assert name == expected
 
-    def test_panes_are_tiled_and_kept_open(self):
+    def test_panes_are_tiled_and_kept_open(self, monkeypatch):
+        # The fake runner means no tmux is actually driven, but the guard in
+        # open_panes still runs — and CI machines do not all have tmux.
+        monkeypatch.setattr(watch, "tmux_available", lambda: True)
         calls = []
         watch.open_panes(
             HOSTS,
