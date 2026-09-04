@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from runon.inventory import Host
-from runon.transport import LocalTransport, SSHTransport, _env_prefix, _looks_like_missing_sftp
+from runon.transport import (
+    LocalTransport,
+    Result,
+    SSHTransport,
+    _env_prefix,
+    _looks_like_missing_sftp,
+)
 
 HOST = Host(name="h", address="example.com", user="deploy")
 PORTED = Host(name="p", address="example.com", port=2222)
@@ -99,3 +105,25 @@ class TestLocalTransport:
         )
         assert not result.ok
         assert result.stderr
+
+
+class TestFakeResponses:
+    """FakeTransport is public API, so its scripting is a contract."""
+
+    def test_a_scripted_failure_is_returned_for_a_matching_command(self):
+        from runon.transport import FakeTransport
+
+        fake = FakeTransport(responses={"migrate": Result("", "", 1, "", "lock held")})
+        host = Host(name="web-1", address="web-1.example.com")
+
+        assert fake.run(host, "./migrate.sh").exit_code == 1
+        assert fake.run(host, "./migrate.sh").stderr == "lock held"
+        # anything unmatched is still a success
+        assert fake.run(host, "./smoke.sh").ok
+
+    def test_default_exit_makes_every_command_fail(self):
+        from runon.transport import FakeTransport
+
+        fake = FakeTransport(default_exit=1)
+
+        assert not fake.run(Host(name="a", address="a"), "anything").ok
