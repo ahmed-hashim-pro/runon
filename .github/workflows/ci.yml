@@ -43,3 +43,50 @@ jobs:
           runon init
           runon list programs
           runon local run-program --program hello-world --verbose
+
+  # `pip install -e .` runs from the source tree, so it hides packaging
+  # mistakes: a module missing from the wheel, a broken entry point, a template
+  # that only exists on disk. This installs the built artefact into a clean
+  # environment and drives it the way a first-time user would.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel
+        run: |
+          pip install build
+          python -m build
+
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+
+      # The claim on the tin: nothing but runon itself gets installed.
+      - name: It really has no runtime dependencies
+        run: |
+          installed=$(/tmp/clean/bin/pip list --format=freeze | grep -viE '^(pip|setuptools|wheel)==' || true)
+          echo "installed: $installed"
+          test "$installed" = "runon==0.1.0"
+
+      - name: A first-time user's session
+        run: |
+          mkdir -p /tmp/first-run && cd /tmp/first-run
+          /tmp/clean/bin/runon --version
+          /tmp/clean/bin/runon init
+          /tmp/clean/bin/runon list programs
+          /tmp/clean/bin/runon local run-program --program hello-world --verbose
+
+      # Before init there is nothing to run; the message must say what to do
+      # rather than reporting an empty list.
+      - name: The unset-up case explains itself
+        run: |
+          mkdir -p /tmp/empty && cd /tmp/empty
+          output=$(/tmp/clean/bin/runon local run-program --program anything 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "runon init"
