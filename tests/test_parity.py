@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 
 import pytest
+from conftest import tty
 
 from runon import cli, runner, watch
 from runon.completion import script
@@ -156,16 +158,12 @@ class TestCompletion:
 
 class TestNamePicker:
     def test_selects_by_number(self):
-        import io
-
         chosen = choose_name(
-            "host", ["a", "b"], stream=io.StringIO("2\n"), prompt_stream=io.StringIO()
+            "host", ["a", "b"], stream=tty("2\n"), prompt_stream=io.StringIO()
         )
         assert chosen == "b"
 
     def test_a_single_option_needs_no_prompt(self):
-        import io
-
         chosen = choose_name(
             "group", ["only"], stream=io.StringIO(), prompt_stream=io.StringIO()
         )

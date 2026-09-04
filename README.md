@@ -333,9 +333,21 @@ runon group [--group G] [flags] <verb> [--program P] [-j N] [args...]
   flags: --ask-password  --persist D  --watch  --dry-run  --verbose
 ```
 
-Omit `--program`, `--host` or `--group` and you get a menu. Shell completion
-knows the scopes and verbs, and asks `runon` itself for program, host and group
-names:
+Omit `--program`, `--host` or `--group` and you get a menu — on a terminal.
+With nothing to ask on (cron, CI, a pipe) runon refuses and names the choices,
+rather than reaching EOF, calling it "cancelled", and exiting 0 having done
+nothing:
+
+```
+$ runon group run-program --program deploy < /dev/null
+runon: --group was not given and there is no terminal to ask on.
+Pass --group explicitly. Choices: production, staging
+$ echo $?
+2
+```
+
+Shell completion knows the scopes and verbs, and asks `runon` itself for
+program, host and group names:
 
 ```bash
 runon completion zsh > "${fpath[1]}/_runon"     # then: compinit

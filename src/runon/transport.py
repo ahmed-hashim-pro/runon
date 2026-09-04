@@ -250,3 +250,11 @@ class FakeTransport:
     def copy(self, host: Host, local: Path, remote: str) -> Result:
         self.copies.append((host.name, str(local), remote))
         return Result(host.name, f"copy {local} -> {remote}", self.default_exit)
+
+    def ssh_argv(self) -> list[str]:
+        """Present so a rehearsal can reach --watch, which needs one.
+
+        Not on the Transport protocol: only the ssh transport really has an
+        invocation to hand out, and LocalTransport would have to invent one.
+        """
+        return ["ssh"]
