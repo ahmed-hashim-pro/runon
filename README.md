@@ -357,7 +357,7 @@ runon completion fish > ~/.config/fish/completions/runon.fish
   one.
 
 ## Tests
-123 tests. No servers, no SSH keys, no network.
+126 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"

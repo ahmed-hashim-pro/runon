@@ -176,3 +176,31 @@ class TestNamePicker:
         # the original prompted rather than requiring the flag
         assert parser.parse_args(["host", "run-program", "--program", "p"]).host is None
         assert parser.parse_args(["group", "run-program", "--program", "p"]).group is None
+
+
+class TestVersion:
+    """0.2.0 shipped with pyproject saying 0.2.0 and --version saying 0.1.0."""
+
+    def test_the_reported_version_matches_the_installed_package(self):
+        from importlib.metadata import version
+
+        import runon
+
+        assert runon.__version__ == version("runon")
+
+    def test_it_matches_pyproject(self):
+        import tomllib
+        from pathlib import Path
+
+        import runon
+
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        declared = tomllib.loads(pyproject.read_text())["project"]["version"]
+        assert runon.__version__ == declared
+
+    def test_the_cli_prints_it(self, capsys):
+        import runon
+
+        with pytest.raises(SystemExit):
+            cli.main(["--version"])
+        assert runon.__version__ in capsys.readouterr().out
