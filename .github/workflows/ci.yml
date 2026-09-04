@@ -79,17 +79,26 @@ jobs:
 
       - name: A first-time user's session
         run: |
-          mkdir -p /tmp/first-run && cd /tmp/first-run
           /tmp/clean/bin/runon --version
-          /tmp/clean/bin/runon init
-          /tmp/clean/bin/runon list programs
+          /tmp/clean/bin/runon init /tmp/ops
+          /tmp/clean/bin/runon config
+          grep -q '/tmp/ops' "$HOME/.runon/config.toml"
+
+      # The whole point of the config file: one workspace, every directory.
+      - name: It works from anywhere
+        run: |
+          cd /
+          /tmp/clean/bin/runon list programs | grep -q hello-world
           /tmp/clean/bin/runon local run-program --program hello-world --verbose
 
       # Before init there is nothing to run; the message must say what to do
-      # rather than reporting an empty list.
+      # rather than reporting an empty list. Its own RUNON_HOME, because the
+      # step above configured one and this must not inherit it.
       - name: The unset-up case explains itself
+        env:
+          RUNON_HOME: /tmp/no-config-here
         run: |
-          mkdir -p /tmp/empty && cd /tmp/empty
+          cd /tmp
           output=$(/tmp/clean/bin/runon local run-program --program anything 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "runon init"
