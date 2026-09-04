@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fleetsh"
+name = "runon"
 version = "0.1.0"
 description = "Keep your operational procedures as plain shell scripts, and run any of them identically on your laptop, one server, or a named group of servers."
 readme = "README.md"
@@ -31,11 +31,11 @@ dependencies = []
 dev = ["pytest==9.1.1", "ruff==0.16.6"]
 
 [project.urls]
-Homepage = "https://github.com/ahmed-hashim-pro/fleetsh"
-Repository = "https://github.com/ahmed-hashim-pro/fleetsh"
+Homepage = "https://github.com/ahmed-hashim-pro/runon"
+Repository = "https://github.com/ahmed-hashim-pro/runon"
 
 [project.scripts]
-fleetsh = "fleetsh.cli:main"
+runon = "runon.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

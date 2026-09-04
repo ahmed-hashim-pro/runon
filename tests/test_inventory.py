@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from fleetsh import inventory
-from fleetsh.errors import ConfigError, UnknownGroup, UnknownHost
+from runon import inventory
+from runon.errors import ConfigError, UnknownGroup, UnknownHost
 
 
 def test_loads_hosts_and_groups(inventory_file):

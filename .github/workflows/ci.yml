@@ -39,7 +39,7 @@ jobs:
       - name: Quickstart works from a clean directory
         shell: bash
         run: |
-          mkdir -p /tmp/fleetsh-ci && cd /tmp/fleetsh-ci
-          fleetsh init
-          fleetsh list programs
-          fleetsh local run-program --program hello-world --verbose
+          mkdir -p /tmp/runon-ci && cd /tmp/runon-ci
+          runon init
+          runon list programs
+          runon local run-program --program hello-world --verbose

@@ -17,7 +17,7 @@ DEFAULT_FILENAME = "inventory.toml"
 
 @dataclass(frozen=True)
 class Host:
-    """A machine fleetsh can reach.
+    """A machine runon can reach.
 
     ``address`` is handed to ssh untouched, so anything ssh understands works:
     a bare hostname, user@host, or a Host alias out of ~/.ssh/config.
@@ -27,7 +27,7 @@ class Host:
     address: str
     port: int | None = None
     user: str | None = None
-    #: Free-form, exported to programs as FLEETSH_VAR_<KEY>.
+    #: Free-form, exported to programs as RUNON_VAR_<KEY>.
     vars: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -130,7 +130,7 @@ def _parse(raw: dict, source: Path) -> Inventory:
         members = spec.get("hosts") if isinstance(spec, dict) else spec
         if not isinstance(members, list) or not all(isinstance(m, str) for m in members):
             raise ConfigError(f"{source}: group {name!r} must list host names")
-        # Catching this here means a typo in a group fails before fleetsh has
+        # Catching this here means a typo in a group fails before runon has
         # half-finished a rollout across the hosts it could resolve.
         unknown = [m for m in members if m not in hosts and not _looks_like_address(m)]
         if unknown:

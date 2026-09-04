@@ -5,29 +5,29 @@ an operator nothing they can use about a typo'd host name.
 """
 
 
-class FleetshError(Exception):
+class RunonError(Exception):
     """Base for anything we expect and can explain."""
 
 
-class ConfigError(FleetshError):
+class ConfigError(RunonError):
     pass
 
 
-class UnknownHost(FleetshError):
+class UnknownHost(RunonError):
     pass
 
 
-class UnknownGroup(FleetshError):
+class UnknownGroup(RunonError):
     pass
 
 
-class UnknownProgram(FleetshError):
+class UnknownProgram(RunonError):
     pass
 
 
-class ProgramInvalid(FleetshError):
+class ProgramInvalid(RunonError):
     pass
 
 
-class RemoteFailure(FleetshError):
+class RemoteFailure(RunonError):
     pass
