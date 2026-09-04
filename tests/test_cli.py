@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 
 import pytest
+from conftest import tty
 
 from runon import cli
 from runon.picker import choose
@@ -165,13 +166,13 @@ class TestPicker:
 
     def test_selects_by_number(self, tmp_path):
         chosen = choose(
-            self._programs(tmp_path), stream=io.StringIO("2\n"), prompt_stream=io.StringIO()
+            self._programs(tmp_path), stream=tty("2\n"), prompt_stream=io.StringIO()
         )
         assert chosen.name == "beta"
 
     def test_blank_input_cancels(self, tmp_path):
         assert choose(
-            self._programs(tmp_path), stream=io.StringIO("\n"), prompt_stream=io.StringIO()
+            self._programs(tmp_path), stream=tty("\n"), prompt_stream=io.StringIO()
         ) is None
 
     def test_a_single_option_needs_no_prompt(self, tmp_path):
@@ -180,7 +181,7 @@ class TestPicker:
 
     def test_rejects_out_of_range_then_accepts(self, tmp_path):
         chosen = choose(
-            self._programs(tmp_path), stream=io.StringIO("9\n1\n"), prompt_stream=io.StringIO()
+            self._programs(tmp_path), stream=tty("9\n1\n"), prompt_stream=io.StringIO()
         )
         assert chosen.name == "alpha"
 
@@ -271,3 +272,234 @@ class TestPasswordPrompt:
         # nothing to authenticate against; offering it would be a lie
         with pytest.raises(SystemExit):
             cli.build_parser().parse_args(["local", "run-program", "--ask-password"])
+
+
+class TestNoTerminal:
+    """A menu is not an answer when the run came from cron or CI.
+
+    0.2.1 reached EOF on the first prompt, called it "cancelled" and exited 0
+    having done nothing — a rollout that silently skipped every machine.
+    """
+
+    def _workspace(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        run(["new-program", "second"], tmp_path, capsys)
+
+    def test_a_missing_program_is_refused_and_names_the_choices(self, tmp_path, capsys):
+        self._workspace(tmp_path, capsys)
+        code, _, err = run(["local", "run-program", "--dry-run"], tmp_path, capsys)
+
+        assert code == 2
+        assert "--program" in err and "hello-world" in err and "second" in err
+
+    @pytest.mark.parametrize(
+        ("scope", "flag"), [("host", "--host"), ("group", "--group")]
+    )
+    def test_a_missing_target_is_refused(self, scope, flag, tmp_path, inventory_file, capsys):
+        root = inventory_file.parent
+        run(["init"], root, capsys)
+        code, _, err = run(
+            [scope, "run-program", "--program", "hello-world", "--dry-run"], root, capsys
+        )
+
+        assert code == 2
+        assert flag in err
+
+    def test_naming_it_still_works_without_a_terminal(self, tmp_path, capsys):
+        self._workspace(tmp_path, capsys)
+        code, out, _ = run(
+            ["local", "run-program", "--program", "second", "--dry-run"], tmp_path, capsys
+        )
+
+        assert code == 0
+        assert "second" in out
+
+    def test_one_choice_still_needs_no_flag(self, tmp_path, capsys):
+        # deliberate: with a single program there is nothing to ask about
+        run(["init"], tmp_path, capsys)
+        code, out, _ = run(["local", "run-program", "--dry-run"], tmp_path, capsys)
+
+        assert code == 0
+        assert "hello-world" in out
+
+
+class TestRemoteVerbs:
+    """The verb dispatch, driven through main() against a transport that
+    records instead of connecting."""
+
+    @pytest.fixture
+    def fake(self, monkeypatch):
+        from runon.transport import FakeTransport
+
+        transport = FakeTransport()
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+        return transport
+
+    def _root(self, inventory_file, capsys):
+        run(["init"], inventory_file.parent, capsys)
+        return inventory_file.parent
+
+    def test_copy_program_copies_and_does_not_run(self, fake, inventory_file, capsys):
+        root = self._root(inventory_file, capsys)
+        code, _, _ = run(
+            ["host", "--host", "web-1", "copy-program", "--program", "hello-world"], root, capsys
+        )
+
+        assert code == 0
+        assert any("hello-world" in local for _, local, _ in fake.copies)
+        assert fake.calls == []
+
+    def test_run_program_runs_and_does_not_copy(self, fake, inventory_file, capsys):
+        root = self._root(inventory_file, capsys)
+        code, _, _ = run(
+            ["host", "--host", "web-1", "run-program", "--program", "hello-world"], root, capsys
+        )
+
+        assert code == 0
+        assert fake.copies == []
+        assert [host for host, _ in fake.calls] == ["web-1"]
+
+    def test_copy_run_does_both_in_that_order(self, fake, inventory_file, capsys):
+        root = self._root(inventory_file, capsys)
+        code, _, _ = run(
+            ["host", "--host", "web-1", "copy-run-program", "--program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 0
+        assert fake.copies and fake.calls
+
+    def test_a_failed_copy_skips_the_run(self, monkeypatch, inventory_file, capsys):
+        from runon.transport import FakeTransport
+
+        class RefusesToCopy(FakeTransport):
+            def copy(self, host, local, remote):
+                return Result(host.name, f"copy {local}", 1, "", "no space left on device")
+
+        transport = RefusesToCopy()
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+        root = self._root(inventory_file, capsys)
+
+        code, out, _ = run(
+            ["host", "--host", "web-1", "copy-run-program", "--program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 1
+        # running a program that failed to arrive would run the previous version
+        assert transport.calls == []
+        assert "no space left" in out
+
+    def test_a_group_reaches_every_host(self, fake, inventory_file, capsys):
+        root = self._root(inventory_file, capsys)
+        code, _, _ = run(
+            ["group", "--group", "all", "run-program", "--program", "hello-world"], root, capsys
+        )
+
+        assert code == 0
+        assert sorted(host for host, _ in fake.calls) == ["db-1", "web-1", "web-2"]
+
+    def test_copy_sends_a_plain_directory(self, fake, tmp_path, inventory_file, capsys):
+        root = self._root(inventory_file, capsys)
+        payload = root / "payload"
+        payload.mkdir()
+        code, _, _ = run(
+            ["host", "--host", "web-1", "copy",
+             "--local-dir", str(payload), "--remote-dir", "/tmp/payload"],
+            root,
+            capsys,
+        )
+
+        assert code == 0
+        assert fake.copies == [("web-1", str(payload), "/tmp/payload")]
+
+
+class TestLayoutsAndTemplates:
+    def test_run_layout_runs_the_named_script(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        (tmp_path / "layouts" / "marker.sh").write_text("echo layout-ran\n", encoding="utf-8")
+
+        code, out, _ = run(["local", "run-layout", "--layout", "marker"], tmp_path, capsys)
+
+        assert code == 0
+        assert "layout-ran" in out
+
+    def test_an_unknown_layout_is_named(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        code, _, err = run(["local", "run-layout", "--layout", "nope"], tmp_path, capsys)
+
+        assert code == 2
+        assert "nope" in err
+
+    def test_no_layouts_at_all_says_where_they_go(self, tmp_path, capsys):
+        code, _, err = run(["local", "run-layout", "--layout", "x"], tmp_path, capsys)
+
+        assert code == 2
+        assert "layouts" in err
+
+    def test_new_program_creates_something_that_runs(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        code, _, _ = run(["new-program", "fresh"], tmp_path, capsys)
+        assert code == 0
+
+        code, out, _ = run(
+            ["local", "run-program", "--program", "fresh", "--verbose"], tmp_path, capsys
+        )
+        assert code == 0
+        assert "fresh" in out
+
+
+class TestWatchWiring:
+    """--watch, from the command line down to the call that opens panes."""
+
+    @pytest.fixture
+    def opened(self, monkeypatch):
+        from runon.transport import FakeTransport
+
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: FakeTransport())
+        seen = {}
+        monkeypatch.setattr(
+            cli.watch,
+            "open_panes",
+            lambda hosts, commands, **kw: seen.update(hosts=hosts, commands=commands, **kw)
+            or "session-1",
+        )
+        return seen
+
+    def test_one_pane_per_host(self, opened, inventory_file, capsys):
+        root = inventory_file.parent
+        run(["init"], root, capsys)
+        code, out, _ = run(
+            ["group", "--group", "all", "--watch", "run-program", "--program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 0
+        assert len(opened["commands"]) == 3
+        assert "tmux attach -t session-1" in out
+
+    def test_a_failed_copy_opens_nothing(self, monkeypatch, inventory_file, capsys):
+        from runon.transport import FakeTransport
+
+        class RefusesToCopy(FakeTransport):
+            def copy(self, host, local, remote):
+                return Result(host.name, "copy", 1, "", "denied")
+
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: RefusesToCopy())
+        monkeypatch.setattr(
+            cli.watch, "open_panes", lambda *a, **k: pytest.fail("opened panes anyway")
+        )
+        root = inventory_file.parent
+        run(["init"], root, capsys)
+
+        code, _, err = run(
+            ["host", "--host", "web-1", "--watch", "copy-run-program", "--program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 1
+        assert "nothing to watch" in err

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -42,3 +43,14 @@ hosts = ["web-1", "web-2", "db-1"]
         encoding="utf-8",
     )
     return path
+
+
+class tty(io.StringIO):
+    """A StringIO that claims to be a terminal.
+
+    The pickers refuse to prompt when nobody is there to answer, and a plain
+    StringIO is not a terminal, so every test that drives a menu needs this.
+    """
+
+    def isatty(self) -> bool:
+        return True

@@ -4,7 +4,23 @@ from __future__ import annotations
 
 import sys
 
+from .errors import RunonError
 from .program import Program
+
+
+def _require_a_terminal(stream, flag: str, choices: list[str]) -> None:
+    """A menu is only an answer when someone is there to read it.
+
+    Without this, a run from cron or CI reaches EOF on the first prompt, treats
+    it as "cancelled", and exits 0 having done nothing at all — the same silent
+    success that an empty --program is refused for.
+    """
+    if stream.isatty():
+        return
+    raise RunonError(
+        f"{flag} was not given and there is no terminal to ask on.\n"
+        f"Pass {flag} explicitly. Choices: {', '.join(choices)}"
+    )
 
 
 def choose(programs: list[Program], *, stream=None, prompt_stream=None) -> Program | None:
@@ -20,6 +36,7 @@ def choose(programs: list[Program], *, stream=None, prompt_stream=None) -> Progr
         return None
     if len(programs) == 1:
         return programs[0]
+    _require_a_terminal(stream, "--program", [p.name for p in programs])
 
     for index, program in enumerate(programs, 1):
         suffix = f"  — {program.description}" if program.description else ""
@@ -52,6 +69,7 @@ def choose_name(kind: str, names: list[str], *, stream=None, prompt_stream=None)
         return None
     if len(names) == 1:
         return names[0]
+    _require_a_terminal(stream, f"--{kind}", names)
 
     print(f"Which {kind}?", file=out)
     for index, name in enumerate(names, 1):
