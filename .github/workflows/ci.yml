@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      # No servers, no SSH keys, no network: everything that would reach another
+      # machine goes through Transport, and the suite drives the fake one.
+      - name: Test
+        run: pytest
+
+      # The README's own quickstart, executed. If `init` ever stops producing
+      # something that runs, this fails rather than the first user finding out.
+      - name: Quickstart works from a clean directory
+        shell: bash
+        run: |
+          mkdir -p /tmp/fleetsh-ci && cd /tmp/fleetsh-ci
+          fleetsh init
+          fleetsh list programs
+          fleetsh local run-program --program hello-world --verbose
