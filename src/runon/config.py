@@ -35,14 +35,28 @@ def read() -> dict:
         raise ConfigError(f"{file} is not valid TOML: {exc}") from exc
 
 
-def workspace() -> Workspace | None:
-    """The configured workspace, or None if `runon init` has not run yet."""
+def default_root() -> Path:
+    """Where programs live when you have not said otherwise.
+
+    A fixed path, so `runon` works the moment it is installed and shell
+    completion always has something to offer. The config file can move it; it
+    just does not have to be written before anything works.
+    """
+    return home() / "workspace"
+
+
+def workspace() -> Workspace:
+    """The configured workspace, or the fixed default."""
     root = read().get("workspace")
     if not root:
-        return None
+        return Workspace(root=default_root())
     if not isinstance(root, str):
         raise ConfigError(f"{path()}: workspace must be a path, not a {type(root).__name__}")
     return Workspace(root=Path(root).expanduser())
+
+
+def is_default(workspace_: Workspace) -> bool:
+    return workspace_.root == default_root()
 
 
 def set_workspace(root: Path) -> Path | None:

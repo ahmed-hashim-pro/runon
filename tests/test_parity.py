@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from conftest import tty
@@ -207,3 +209,133 @@ class TestVersion:
         with pytest.raises(SystemExit):
             cli.main(["--version"])
         assert runon.__version__ in capsys.readouterr().out
+
+
+class TestCompletionRuns:
+    """`bash -n` only proves the script parses. This runs it, in bash and zsh.
+
+    Fish is not driven here — its completions need a real fish session — so
+    that one is covered only by the script being generated at all.
+
+    A broken f-string escape in the heredoc produces a script that is valid
+    shell and completes nothing, which is the failure worth catching.
+    """
+
+    def _shim(self, tmp_path):
+        """A `runon` on PATH answering from this workspace.
+
+        The completion scripts shell out to the real command, so the test needs
+        one — without requiring the package installed in the environment
+        running pytest.
+        """
+        bindir = tmp_path / "bin"
+        if not bindir.is_dir():
+            bindir.mkdir()
+            shim = bindir / "runon"
+            shim.write_text(
+                "#!/bin/sh\n"
+                f"exec {sys.executable} -c "
+                "'import sys;from runon.cli import main;sys.exit(main())' \"$@\"\n",
+                encoding="utf-8",
+            )
+            shim.chmod(0o755)
+        return bindir
+
+    def _complete(self, tmp_path, words: list[str]) -> list[str]:
+        import os
+        import shutil
+
+        bash = shutil.which("bash")
+        assert bash, "bash is needed to test bash completion"
+
+        script_file = tmp_path / "runon.bash"
+        script_file.write_text(script("bash"), encoding="utf-8")
+        bindir = self._shim(tmp_path)
+
+        quoted = " ".join(f'"{w}"' for w in words)
+        driver = (
+            f"source {script_file}\n"
+            f"COMP_WORDS=({quoted})\n"
+            f"COMP_CWORD={len(words) - 1}\n"
+            "COMPREPLY=()\n"
+            "_runon\n"
+            'printf "%s\\n" "${COMPREPLY[@]}"\n'
+        )
+        env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "RUNON_HOME": str(tmp_path / "home"),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        }
+        out = subprocess.run(
+            [bash, "-c", driver], capture_output=True, text=True, env=env, cwd=tmp_path
+        )
+        return [line for line in out.stdout.split("\n") if line]
+
+    def _complete_zsh(self, tmp_path, words: list[str]) -> list[str]:
+        import os
+        import shutil
+
+        zsh = shutil.which("zsh")
+        if not zsh:
+            pytest.skip("zsh is not installed here")
+
+        script_file = tmp_path / "_runon"
+        script_file.write_text(script("zsh"), encoding="utf-8")
+        bindir = self._shim(tmp_path)
+
+        quoted = " ".join(f'"{w}"' for w in words)
+        driver = (
+            f"words=({quoted})\n"
+            f"CURRENT={len(words)}\n"
+            # the real compadd needs a running completion system; this stands in
+            'compadd(){ print -r -- "${@:#-*}"; }\n'
+            f"source {script_file}\n"
+        )
+        env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "RUNON_HOME": str(tmp_path / "home"),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        }
+        out = subprocess.run(
+            [zsh, "-f", "-c", driver], capture_output=True, text=True, env=env, cwd=tmp_path
+        )
+        return [line for line in out.stdout.split("\n") if line]
+
+    def test_scopes_come_first(self, tmp_path):
+        assert "doctor" in self._complete(tmp_path, ["runon", ""])
+
+    def test_zsh_completes_program_names_after_the_verb(self, tmp_path):
+        assert "hello-world" in self._complete_zsh(
+            tmp_path, ["runon", "local", "run-program", ""]
+        )
+
+    def test_zsh_completes_layouts(self, tmp_path):
+        assert "split" in self._complete_zsh(tmp_path, ["runon", "local", "run-layout", ""])
+
+    def test_program_names_follow_the_verb(self, tmp_path):
+        # the whole point: nobody wants to type --program first
+        assert "hello-world" in self._complete(
+            tmp_path, ["runon", "local", "run-program", ""]
+        )
+
+    def test_program_names_follow_the_flag_too(self, tmp_path):
+        assert "hello-world" in self._complete(
+            tmp_path, ["runon", "local", "run-program", "--program", ""]
+        )
+
+    def test_a_remote_verb_completes_programs(self, tmp_path):
+        assert "hello-world" in self._complete(
+            tmp_path, ["runon", "group", "copy-run-program", ""]
+        )
+
+    def test_layouts_are_completed(self, tmp_path):
+        assert "split" in self._complete(tmp_path, ["runon", "local", "run-layout", ""])
+
+    def test_nothing_that_is_not_a_name_is_offered(self, tmp_path):
+        # `list programs` prints its hints on stderr, so a first run cannot
+        # offer the words of an error message as program names
+        assert self._complete(tmp_path, ["runon", "local", "run-program", ""]) == [
+            "hello-world"
+        ]
