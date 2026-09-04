@@ -34,7 +34,7 @@ def run(argv, cwd: Path, capsys) -> tuple[int, str, str]:
 
 class TestInitAndList:
     def test_init_scaffolds_something_that_runs(self, tmp_path, capsys):
-        code, out, _ = run(["init"], tmp_path, capsys)
+        code, out, _ = run(["init", str(tmp_path)], tmp_path, capsys)
 
         assert code == 0
         assert (tmp_path / "programs" / "hello-world" / "main.sh").is_file()
@@ -42,14 +42,14 @@ class TestInitAndList:
         assert (tmp_path / "inventory.toml").is_file()
 
     def test_init_refuses_to_overwrite_without_force(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
-        code, _, err = run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        code, _, err = run(["init", str(tmp_path)], tmp_path, capsys)
 
         assert code == 2
         assert "already exists" in err
 
     def test_list_programs_shows_the_description_from_main_sh(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, out, _ = run(["list", "programs"], tmp_path, capsys)
 
         assert code == 0
@@ -57,16 +57,17 @@ class TestInitAndList:
         assert "greeting" in out
 
     def test_list_hosts_and_groups(self, tmp_path, inventory_file, capsys):
-        code, out, _ = run(["list", "hosts"], inventory_file.parent, capsys)
+        where = ["-C", str(inventory_file.parent)]
+        code, out, _ = run([*where, "list", "hosts"], tmp_path, capsys)
         assert "web-1" in out and "deploy@web-1.example.com" in out
 
-        _, out, _ = run(["list", "groups"], inventory_file.parent, capsys)
+        _, out, _ = run([*where, "list", "groups"], tmp_path, capsys)
         assert "web" in out
 
 
 class TestLocal:
     def test_runs_a_program_here(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, out, _ = run(
             ["local", "run-program", "--program", "hello-world", "-v"], tmp_path, capsys
         )
@@ -76,7 +77,7 @@ class TestLocal:
         assert "hello from" in out
 
     def test_a_failing_program_exits_non_zero_and_shows_why(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         broken = tmp_path / "programs" / "broken"
         broken.mkdir()
         (broken / "main.sh").write_text("#!/bin/sh\n# Always fails.\necho nope >&2\nexit 4\n")
@@ -89,7 +90,7 @@ class TestLocal:
         assert "nope" in out
 
     def test_arguments_reach_the_program(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         echoer = tmp_path / "programs" / "echoer"
         echoer.mkdir()
         (echoer / "main.sh").write_text('#!/bin/sh\n# Echoes.\necho "got:$1"\n')
@@ -102,7 +103,7 @@ class TestLocal:
 
 class TestErrors:
     def test_unknown_program_lists_what_exists(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, _, err = run(["local", "run-program", "--program", "nope"], tmp_path, capsys)
 
         assert code == 2
@@ -119,14 +120,14 @@ class TestErrors:
 
     @pytest.mark.parametrize("name", ["../etc/passwd", "a/b", "", "-flag"])
     def test_a_program_name_cannot_escape_the_workspace(self, tmp_path, name, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, _, _ = run(["local", "run-program", "--program", name], tmp_path, capsys)
         assert code == 2
 
 
 class TestDryRun:
     def test_names_the_hosts_without_touching_them(self, tmp_path, inventory_file, capsys):
-        run(["init"], inventory_file.parent, capsys)
+        run(["init", str(inventory_file.parent)], inventory_file.parent, capsys)
         code, out, _ = run(
             ["group", "--group", "web", "run-program", "--program", "hello-world", "--dry-run"],
             inventory_file.parent,
@@ -189,26 +190,34 @@ class TestPicker:
 class TestFirstRun:
     """What someone sees before they have set anything up."""
 
-    def test_running_a_program_with_no_workspace_points_at_init(self, tmp_path, capsys):
+    def test_a_brand_new_machine_can_run_something(self, tmp_path, capsys):
+        # nothing set up at all: no config, no workspace, no init
+        code, out, _ = run(["local", "run-program", "hello-world", "-v"], tmp_path, capsys)
+
+        assert code == 0
+        assert "hello" in out
+
+    def test_running_an_unknown_program_names_what_exists(self, tmp_path, capsys):
         code, _, err = run(["local", "run-program", "--program", "anything"], tmp_path, capsys)
 
         assert code == 2
-        # "no program named X / Available: (none)" is true and useless here
-        assert "runon init" in err
+        assert "no program named 'anything'" in err
+        # naming what does exist beats an empty "Available:" line
+        assert "hello-world" in err
 
-    def test_listing_with_no_workspace_points_at_init(self, tmp_path, capsys):
+    def test_listing_on_a_new_machine_shows_the_sample(self, tmp_path, capsys):
         code, out, _ = run(["list", "programs"], tmp_path, capsys)
 
         assert code == 0
-        assert "runon init" in out
+        assert "hello-world" in out
 
     def test_the_scaffolded_program_is_executable(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         entry = tmp_path / "programs" / "hello-world" / "main.sh"
         assert entry.stat().st_mode & 0o111, "main.sh is not executable"
 
     def test_init_then_run_works_with_no_further_setup(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, out, _ = run(
             ["local", "run-program", "--program", "hello-world", "-v"], tmp_path, capsys
         )
@@ -282,7 +291,7 @@ class TestNoTerminal:
     """
 
     def _workspace(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         run(["new-program", "second"], tmp_path, capsys)
 
     def test_a_missing_program_is_refused_and_names_the_choices(self, tmp_path, capsys):
@@ -297,7 +306,7 @@ class TestNoTerminal:
     )
     def test_a_missing_target_is_refused(self, scope, flag, tmp_path, inventory_file, capsys):
         root = inventory_file.parent
-        run(["init"], root, capsys)
+        run(["init", str(root)], root, capsys)
         code, _, err = run(
             [scope, "run-program", "--program", "hello-world", "--dry-run"], root, capsys
         )
@@ -316,7 +325,7 @@ class TestNoTerminal:
 
     def test_one_choice_still_needs_no_flag(self, tmp_path, capsys):
         # deliberate: with a single program there is nothing to ask about
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, out, _ = run(["local", "run-program", "--dry-run"], tmp_path, capsys)
 
         assert code == 0
@@ -336,7 +345,7 @@ class TestRemoteVerbs:
         return transport
 
     def _root(self, inventory_file, capsys):
-        run(["init"], inventory_file.parent, capsys)
+        run(["init", str(inventory_file.parent)], inventory_file.parent, capsys)
         return inventory_file.parent
 
     def test_copy_program_copies_and_does_not_run(self, fake, inventory_file, capsys):
@@ -418,7 +427,7 @@ class TestRemoteVerbs:
 
 class TestLayoutsAndTemplates:
     def test_run_layout_runs_the_named_script(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         (tmp_path / "layouts" / "marker.sh").write_text("echo layout-ran\n", encoding="utf-8")
 
         code, out, _ = run(["local", "run-layout", "--layout", "marker"], tmp_path, capsys)
@@ -427,7 +436,7 @@ class TestLayoutsAndTemplates:
         assert "layout-ran" in out
 
     def test_an_unknown_layout_is_named(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, _, err = run(["local", "run-layout", "--layout", "nope"], tmp_path, capsys)
 
         assert code == 2
@@ -440,7 +449,7 @@ class TestLayoutsAndTemplates:
         assert "layouts" in err
 
     def test_new_program_creates_something_that_runs(self, tmp_path, capsys):
-        run(["init"], tmp_path, capsys)
+        run(["init", str(tmp_path)], tmp_path, capsys)
         code, _, _ = run(["new-program", "fresh"], tmp_path, capsys)
         assert code == 0
 
@@ -470,7 +479,7 @@ class TestWatchWiring:
 
     def test_one_pane_per_host(self, opened, inventory_file, capsys):
         root = inventory_file.parent
-        run(["init"], root, capsys)
+        run(["init", str(root)], root, capsys)
         code, out, _ = run(
             ["group", "--group", "all", "--watch", "run-program", "--program", "hello-world"],
             root,
@@ -493,7 +502,7 @@ class TestWatchWiring:
             cli.watch, "open_panes", lambda *a, **k: pytest.fail("opened panes anyway")
         )
         root = inventory_file.parent
-        run(["init"], root, capsys)
+        run(["init", str(root)], root, capsys)
 
         code, _, err = run(
             ["host", "--host", "web-1", "--watch", "copy-run-program", "--program", "hello-world"],
@@ -597,14 +606,28 @@ class TestOnePlace:
         assert code == 2
         assert "no programs" in err
 
-    def test_before_any_init_it_says_so_rather_than_naming_the_cwd(self, tmp_path, capsys):
-        # "run init here" is wrong advice when you are standing in /
-        code, _, err = run(["local", "run-program", "--program", "x"], tmp_path, capsys)
+    def test_the_default_workspace_is_made_on_first_use(self, tmp_path, capsys):
+        from runon import config
 
-        assert code == 2
-        assert "no workspace yet" in err
+        assert not config.default_root().exists()
+        code, out, err = run(["list", "programs"], tmp_path, capsys)
 
-    def test_a_configured_but_empty_workspace_is_a_different_message(self, tmp_path, capsys):
+        assert code == 0
+        assert (config.default_root() / "programs" / "hello-world").is_dir()
+        # the note goes to stderr; stdout is a list of names the shell parses
+        assert str(config.default_root()) in err
+        assert out.strip().split() [0] == "hello-world"
+
+    def test_bare_init_targets_the_fixed_default(self, tmp_path, capsys):
+        from runon import config
+
+        code, out, _ = run(["init"], tmp_path, capsys)
+
+        assert code == 0
+        assert str(config.default_root()) in out
+        assert not (tmp_path / "programs").exists()
+
+    def test_an_empty_workspace_says_how_to_fill_it(self, tmp_path, capsys):
         ops = tmp_path / "ops"
         run(["init", str(ops)], tmp_path, capsys)
         for child in (ops / "programs").iterdir():
@@ -615,7 +638,7 @@ class TestOnePlace:
         code, _, err = run(["local", "run-program", "--program", "x"], tmp_path, capsys)
 
         assert code == 2
-        assert "configured workspace" in err and str(ops) in err
+        assert "new-program" in err and str(ops) in err
 
     def test_a_hand_edited_config_that_is_broken_says_so(self, tmp_path, capsys):
         from runon import config
@@ -673,3 +696,85 @@ class TestOnePlace:
         config.path().write_text('workspace = "/tmp\n', encoding="utf-8")
 
         assert run(scope, tmp_path, capsys)[0] == 0
+
+    def test_an_empty_listing_puts_nothing_on_stdout(self, tmp_path, capsys):
+        """`runon list programs` is parsed by the completion scripts.
+
+        Anything on stdout is offered as a program name, so an explanation
+        there becomes 'runon' and 'Run' in your shell's suggestions.
+        """
+        empty = tmp_path / "empty"
+        (empty / "programs").mkdir(parents=True)
+
+        code, out, err = run(["-C", str(empty), "list", "programs"], tmp_path, capsys)
+
+        assert code == 0
+        assert out == ""
+        assert "new-program" in err
+
+
+class TestProgramAsPositional:
+    """A completed name has to land somewhere that works.
+
+    Before this, `run-program deploy` treated 'deploy' as an argument to a
+    program chosen by the picker — so tab-completing a name into that slot
+    would have run something else, or nothing.
+    """
+
+    def test_the_first_word_is_the_program(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        code, out, _ = run(["local", "run-program", "hello-world", "-v"], tmp_path, capsys)
+
+        assert code == 0
+        assert "hello-world" in out
+
+    def test_the_rest_are_its_arguments(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        entry = tmp_path / "programs" / "hello-world" / "main.sh"
+        entry.write_text('#!/bin/sh\n# echoes\necho "got: $*"\n', encoding="utf-8")
+        entry.chmod(0o755)
+
+        code, out, _ = run(
+            ["local", "run-program", "hello-world", "one", "two", "-v"], tmp_path, capsys
+        )
+
+        assert code == 0
+        assert "got: one two" in out
+
+    def test_the_flag_still_wins_and_keeps_every_positional(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        entry = tmp_path / "programs" / "hello-world" / "main.sh"
+        entry.write_text('#!/bin/sh\n# echoes\necho "got: $*"\n', encoding="utf-8")
+        entry.chmod(0o755)
+
+        code, out, _ = run(
+            ["local", "run-program", "--program", "hello-world", "one", "two", "-v"],
+            tmp_path,
+            capsys,
+        )
+
+        assert code == 0
+        assert "got: one two" in out
+
+    def test_an_unknown_first_word_is_an_error_not_a_silent_picker(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        code, _, err = run(["local", "run-program", "nope"], tmp_path, capsys)
+
+        assert code == 2
+        assert "nope" in err
+
+    def test_it_works_on_the_remote_verbs_too(
+        self, monkeypatch, tmp_path, inventory_file, capsys
+    ):
+        from runon.transport import FakeTransport
+
+        transport = FakeTransport()
+        run(["init", str(inventory_file.parent)], tmp_path, capsys)
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+
+        code, _, _ = run(
+            ["host", "--host", "web-1", "run-program", "hello-world", "80"], tmp_path, capsys
+        )
+
+        assert code == 0
+        assert any("hello-world" in command and "80" in command for _, command in transport.calls)

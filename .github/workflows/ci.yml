@@ -34,15 +34,15 @@ jobs:
       - name: Test
         run: pytest
 
-      # The README's own quickstart, executed. If `init` ever stops producing
-      # something that runs, this fails rather than the first user finding out.
-      - name: Quickstart works from a clean directory
+      # The README's own quickstart, executed -- two commands, no setup step.
+      # If that ever stops being true, this fails rather than a first user
+      # finding out.
+      - name: The quickstart is still two commands
         shell: bash
         run: |
-          mkdir -p /tmp/runon-ci && cd /tmp/runon-ci
-          runon init
+          cd /
           runon list programs
-          runon local run-program --program hello-world --verbose
+          runon local run-program hello-world --verbose
 
   # `pip install -e .` runs from the source tree, so it hides packaging
   # mistakes: a module missing from the wheel, a broken entry point, a template
@@ -77,28 +77,48 @@ jobs:
           test "$(echo "$installed" | wc -l)" -eq 1
           echo "$installed" | grep -q "^runon=="
 
-      - name: A first-time user's session
-        run: |
-          /tmp/clean/bin/runon --version
-          /tmp/clean/bin/runon init /tmp/ops
-          /tmp/clean/bin/runon config
-          grep -q '/tmp/ops' "$HOME/.runon/config.toml"
-
-      # The whole point of the config file: one workspace, every directory.
-      - name: It works from anywhere
+      # Nothing set up at all: no init, no config, no workspace. This is the
+      # claim the fixed default makes, so it is checked before anything else.
+      - name: It works on a machine where nothing has been done
+        env:
+          RUNON_HOME: /tmp/untouched
         run: |
           cd /
+          /tmp/clean/bin/runon --version
           /tmp/clean/bin/runon list programs | grep -q hello-world
-          /tmp/clean/bin/runon local run-program --program hello-world --verbose
+          /tmp/clean/bin/runon local run-program hello-world --verbose
+          test -d /tmp/untouched/workspace/programs/hello-world
 
-      # Before init there is nothing to run; the message must say what to do
-      # rather than reporting an empty list. Its own RUNON_HOME, because the
-      # step above configured one and this must not inherit it.
-      - name: The unset-up case explains itself
-        env:
-          RUNON_HOME: /tmp/no-config-here
+      # `runon list` is parsed by the completion scripts, so stdout has to be
+      # names and nothing else -- an explanation there gets offered as a
+      # program name in your shell.
+      - name: An empty workspace puts nothing on stdout
         run: |
-          cd /tmp
-          output=$(/tmp/clean/bin/runon local run-program --program anything 2>&1 || true)
-          echo "$output"
-          echo "$output" | grep -q "runon init"
+          mkdir -p /tmp/hollow/programs
+          out=$(/tmp/clean/bin/runon -C /tmp/hollow list programs 2>/dev/null)
+          test -z "$out"
+
+      # The completion scripts shell out to runon, so this checks the whole
+      # path: script -> command -> workspace -> names back into the shell.
+      - name: Completion actually completes
+        run: |
+          export PATH="/tmp/clean/bin:$PATH"
+          runon completion bash > /tmp/runon.bash
+          cat > /tmp/drive.sh <<'EOF'
+          source /tmp/runon.bash
+          COMP_WORDS=(runon local run-program "")
+          COMP_CWORD=3
+          COMPREPLY=()
+          _runon
+          printf '%s\n' "${COMPREPLY[@]}"
+          EOF
+          reply=$(bash /tmp/drive.sh)
+          echo "$reply"
+          echo "$reply" | grep -qx hello-world
+
+      - name: Moving the workspace is remembered
+        run: |
+          /tmp/clean/bin/runon init /tmp/ops
+          grep -q '/tmp/ops' "$HOME/.runon/config.toml"
+          cd /
+          /tmp/clean/bin/runon config | grep -q '/tmp/ops'

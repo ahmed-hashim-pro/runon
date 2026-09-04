@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init = sub.add_parser("init", help="scaffold a workspace and remember where it is")
     init.add_argument(
-        "path", type=Path, nargs="?", help="where to put it (default: this directory)"
+        "path", type=Path, nargs="?", help="where to put it (default: ~/.runon/workspace)"
     )
     init.add_argument("--force", action="store_true", help="write into a non-empty directory")
     new = sub.add_parser("new-program", help="create a program from the template")
@@ -108,7 +108,24 @@ def _add_program_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--program", "-p", help="program name (prompts if omitted)")
     parser.add_argument("--verbose", "-v", action="store_true", help="show output from successes")
     parser.add_argument("--dry-run", action="store_true", help="print what would happen")
-    parser.add_argument("args", nargs="*", help="arguments passed through to main.sh")
+    parser.add_argument(
+        "args", nargs="*", help="program name, then arguments passed through to main.sh"
+    )
+
+
+def _program_and_args(args) -> tuple[str | None, list[str]]:
+    """Splits `run-program deploy 80` into the program and its arguments.
+
+    Without this the first word is a pass-through argument, so tab-completing a
+    program name into that slot would silently run something else — or nothing,
+    via the picker. `--program` still wins, and then every positional is an
+    argument.
+    """
+    if args.program is not None:
+        return args.program, list(args.args)
+    if args.args:
+        return args.args[0], list(args.args[1:])
+    return None, []
 
 
 def _add_remote_verbs(parser: argparse.ArgumentParser) -> None:
@@ -151,7 +168,9 @@ def _dispatch(args: argparse.Namespace) -> int:
     # These four run before the workspace is resolved, because a config file
     # that will not parse must not take out the two commands that repair it.
     if args.scope == "init":
-        return _init(args.path or args.directory or Path.cwd(), force=args.force)
+        return _init(
+            args.path or args.directory or config.default_root(), force=args.force
+        )
     if args.scope == "config":
         return _config(args.workspace)
     if args.scope == "doctor":
@@ -179,32 +198,27 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 
 def _workspace_for(args) -> Workspace:
-    """-C for one command, otherwise the one place the config points at.
-
-    Falling back to the cwd matters on a machine with no config yet: `runon
-    init` needs somewhere to land, and refusing without a workspace when the
-    only way to get one is to init would be a deadlock.
-    """
+    """-C for one command, otherwise the one place the config points at."""
     if args.directory:
         return Workspace(root=args.directory)
-    return config.workspace() or Workspace(root=Path.cwd())
+
+    workspace = config.workspace()
+    if config.is_default(workspace) and not workspace.programs_path.is_dir():
+        # The default is filled in on first use rather than waiting for an
+        # init: a fixed folder that starts empty gives a new user nothing to
+        # run and nothing to complete, which is the friction it exists to fix.
+        from .scaffold import write_workspace
+
+        write_workspace(workspace.root)
+        print(f"runon: created {workspace.root}", file=sys.stderr)
+    return workspace
 
 
-def _unconfigured_hint(workspace: Workspace) -> str:
-    """What to say when there is nothing to run.
-
-    Two different situations wear the same face: never having run init, and
-    pointing the config at a directory that has since moved or been deleted.
-    """
-    if config.workspace() is None:
-        return (
-            "runon has no workspace yet.\n"
-            "Run 'runon init <dir>' once — it records the path, and every "
-            "command then works from anywhere."
-        )
+def _empty_workspace_hint(workspace: Workspace) -> str:
     return (
-        f"the configured workspace is {workspace.root}, which has no programs.\n"
-        f"Check 'runon config', or run 'runon init {workspace.root}' to scaffold it."
+        f"no programs in {workspace.root}\n"
+        f"Run 'runon new-program <name>' to add one, or 'runon config' to see "
+        f"where runon is pointed."
     )
 
 
@@ -232,7 +246,8 @@ def _config(new_root: Path | None) -> int:
         # command that refuses to run because something is wrong.
         print(f"  workspace  unreadable — {exc}")
         return 2
-    print(f"  workspace  {current.root if current else '(not set — run runon init)'}")
+    default = "  (the default; nothing set)" if config.is_default(current) else ""
+    print(f"  workspace  {current.root}{default}")
     return 0
 
 
@@ -257,7 +272,7 @@ def _resolve_program(workspace: Workspace, name: str | None):
     # workspace yet needs to be told that, not told their program is missing
     # from an empty list.
     if not programs:
-        raise RunonError(_unconfigured_hint(workspace))
+        raise RunonError(_empty_workspace_hint(workspace))
     if name:
         return workspace.program(program_mod.validate_name(name))
     return choose(programs)
@@ -283,13 +298,16 @@ def _local(workspace: Workspace, args) -> int:
         result = transport.run(host, f"sh {script}")
         return emit([result], verbose=True)
 
-    program = _resolve_program(workspace, args.program)
+    name, passthrough = _program_and_args(args)
+    program = _resolve_program(workspace, name)
     if program is None:
         return 0
     if args.dry_run:
         print(f"would run {program.name} on the local machine")
         return 0
-    result = runner.run_program(transport, host, workspace, program, args=args.args, remote=False)
+    result = runner.run_program(
+        transport, host, workspace, program, args=passthrough, remote=False
+    )
     return emit([result], verbose=args.verbose)
 
 
@@ -335,7 +353,8 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
         )
         return emit(results, verbose=args.verbose)
 
-    program = _resolve_program(workspace, args.program)
+    name, passthrough = _program_and_args(args)
+    program = _resolve_program(workspace, name)
     if program is None:
         return 0
     if args.dry_run:
@@ -343,18 +362,18 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
         return 0
 
     if getattr(args, "watch", False):
-        return _watch(transport, hosts, workspace, program, args)
+        return _watch(transport, hosts, workspace, program, passthrough, args)
 
     def work(host) -> Result | list[Result]:
         if args.verb == "copy-program":
             return runner.copy_program(transport, host, workspace, program)
         if args.verb == "run-program":
-            return runner.run_program(transport, host, workspace, program, args=args.args)
+            return runner.run_program(transport, host, workspace, program, args=passthrough)
         copied = runner.copy_program(transport, host, workspace, program)
         failed = [r for r in copied if not r.ok]
         if failed:
             return failed[0]
-        return runner.run_program(transport, host, workspace, program, args=args.args)
+        return runner.run_program(transport, host, workspace, program, args=passthrough)
 
     results = runner.fan_out(hosts, work, parallel=parallel)
     return emit(results, verbose=args.verbose)
@@ -396,7 +415,7 @@ def _password_for(args, hosts) -> str | None:
     return password
 
 
-def _watch(transport, hosts, workspace, program, args) -> int:
+def _watch(transport, hosts, workspace, program, passthrough, args) -> int:
     """Runs the program in tmux panes instead of collecting results.
 
     Copying still happens up front and sequentially, because a pane that starts
@@ -413,7 +432,7 @@ def _watch(transport, hosts, workspace, program, args) -> int:
         if args.verb == "copy-program":
             return emit(copied)
 
-    remote_command = runner.watch_command(workspace, program, args=args.args)
+    remote_command = runner.watch_command(workspace, program, args=passthrough)
     commands = watch.build_commands(hosts, transport.ssh_argv(), remote_command)
     session = watch.open_panes(hosts, commands, label=program.name)
     print(f"tmux session: {session}  (reattach with: tmux attach -t {session})")
@@ -430,7 +449,9 @@ def _list(workspace: Workspace, inv: inventory.Inventory, what: str) -> int:
     if what == "programs":
         items = workspace.programs()
         if not items:
-            print(_unconfigured_hint(workspace))
+            # stderr: `runon list programs` is parsed by the completion
+            # scripts, so anything on stdout has to be a name.
+            print(_empty_workspace_hint(workspace), file=sys.stderr)
             return 0
         width = max(len(p.name) for p in items)
         for p in items:
@@ -457,7 +478,7 @@ def _init(root: Path, *, force: bool) -> int:
     previous = config.set_workspace(root)
     _say_where(root, previous)
     print("\nTry:  runon list programs")
-    print("      runon local run-program --program hello-world")
+    print("      runon local run-program hello-world")
     return 0
 
 

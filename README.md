@@ -35,28 +35,28 @@ Python 3.11+. No runtime dependencies.
 ```bash
 pip install runon            # or: pipx install runon
 
-runon init ~/ops           # scaffolds programs/, functions/, layouts/, inventory.toml
-runon list programs        # from anywhere; the path is remembered
-runon local run-program --program hello-world --verbose
+runon list programs                        # nothing to set up first
+runon local run-program hello-world -v
 ```
 
 ## One workspace, remembered
 
-> **Changed in 0.3.0.** Earlier versions searched upward from your current
-> directory, so the same command listed different programs depending on where
-> you stood. Run `runon init <dir>` once and that stops. `-C` still works.
+> **Changed in 0.4.0.** The workspace has a fixed default and is created on
+> first use, so there is nothing to run before `runon` works. **0.3.0** removed
+> the upward search from your current directory — before that, the same command
+> listed different programs depending on where you stood.
 
-Your programs live in **one directory**, and `runon init` records where it is:
+Your programs live in **one directory**, fixed unless you move it:
 
 ```
-~/.runon/config.toml         # written by init
-    workspace = "/Users/you/ops"
-
-~/ops/                       # the one place
+~/.runon/workspace/          # the one place, made on first use
 ├── programs/<name>/main.sh  # a program is a directory, so it can carry its own files
 ├── functions/               # shared helpers, shipped alongside every program
 ├── layouts/
 └── inventory.toml           # hosts and groups
+
+~/.runon/config.toml         # only if you move it
+    workspace = "/Users/you/ops"
 ```
 
 So `runon` means the same thing in every directory on the machine — there is
@@ -70,8 +70,8 @@ runon group --group prod run-program --program deploy
 
 ```bash
 runon config                             # where am I pointed?
-runon config --workspace ~/other-ops     # point somewhere that already exists
-runon init ~/other-ops                   # scaffold and point, saying what it was
+runon config --workspace ~/ops           # point somewhere that already exists
+runon init ~/ops                         # scaffold and point, saying what it was
 runon -C ~/scratch list programs         # just this once, without repointing
 ```
 
@@ -369,17 +369,18 @@ Conventions that keep this pleasant, learned the hard way:
 
 ```
 runon init [DIR]                    scaffold a workspace and remember it
+                                    (default: ~/.runon/workspace)
 runon config [--workspace DIR]      show or change which one
 runon new-program <name>            create one from the template
 runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs
 runon completion bash|zsh|fish      print a completion script
 
-runon local run-program  [--program P] [args...]
+runon local run-program  [P] [args...]     (or --program P)
 runon local run-layout   [--layout L]
 
-runon host  [--host H]  [flags] <verb> [--program P] [args...]
-runon group [--group G] [flags] <verb> [--program P] [-j N] [args...]
+runon host  [--host H]  [flags] <verb> [P] [args...]
+runon group [--group G] [flags] <verb> [P] [-j N] [args...]
 
   flags: --ask-password  --persist D  --watch  --dry-run  --verbose
 ```
@@ -398,13 +399,26 @@ $ echo $?
 ```
 
 Shell completion knows the scopes and verbs, and asks `runon` itself for
-program, host and group names:
+program, host, group and layout names — right after the verb, where you would
+type them:
+
+```
+$ runon local run-program <TAB>
+deploy  disk-report  hello-world
+
+$ runon group --group prod copy-run-program de<TAB>
+deploy
+```
 
 ```bash
 runon completion zsh > "${fpath[1]}/_runon"     # then: compinit
 runon completion bash > /usr/local/etc/bash_completion.d/runon
 runon completion fish > ~/.config/fish/completions/runon.fish
 ```
+
+This is why `runon list` prints only names on stdout and puts everything else
+on stderr: the completion scripts parse that output, so an explanation there
+would be offered to you as a program name.
 
 ## What this does not do
 
