@@ -47,6 +47,26 @@ runon local run-program --program hello-world --verbose
 > needed — `runon` has no runtime dependencies, and the only external programs
 > it uses are the `ssh` and `scp` you already have.
 
+<details>
+<summary>Releasing (for maintainers)</summary>
+
+Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/):
+GitHub Actions mints a short-lived OIDC token, so there is no API token stored
+anywhere to leak.
+
+```bash
+# rehearse against TestPyPI first
+gh workflow run release.yml -f target=testpypi
+
+# then release for real
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The workflow runs the suite, builds an sdist and a wheel, checks the metadata,
+and refuses to publish if the tag does not match the version in `pyproject.toml`.
+
+</details>
+
 That last command works immediately, with no servers and no configuration.
 
 ## The idea
