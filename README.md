@@ -1,6 +1,6 @@
 # runon
 
-[![CI](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/runon.svg)](https://pypi.org/project/runon/) [![Python](https://img.shields.io/pypi/pyversions/runon.svg)](https://pypi.org/project/runon/) [![CI](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Keep your operational procedures as plain shell scripts, and run any of them
 identically on your laptop, on one server, or across a named group of servers.
@@ -33,9 +33,7 @@ has not worked.
 Python 3.11+. No runtime dependencies.
 
 ```bash
-pipx install git+https://github.com/ahmed-hashim-pro/runon.git
-# or, into a virtualenv you manage:
-#   pip install git+https://github.com/ahmed-hashim-pro/runon.git
+pip install runon            # or: pipx install runon
 
 mkdir my-ops && cd my-ops
 runon init                 # scaffolds programs/, functions/, layouts/, inventory.toml
@@ -43,9 +41,8 @@ runon list programs
 runon local run-program --program hello-world --verbose
 ```
 
-> Not on PyPI yet, so install from the repository for now. Nothing else is
-> needed — `runon` has no runtime dependencies, and the only external programs
-> it uses are the `ssh` and `scp` you already have.
+> That installs exactly one package. `runon` has no runtime dependencies, and
+> the only external programs it uses are the `ssh` and `scp` you already have.
 
 <details>
 <summary>Releasing (for maintainers)</summary>
