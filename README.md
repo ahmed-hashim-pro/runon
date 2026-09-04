@@ -35,11 +35,54 @@ Python 3.11+. No runtime dependencies.
 ```bash
 pip install runon            # or: pipx install runon
 
-mkdir my-ops && cd my-ops
-runon init                 # scaffolds programs/, functions/, layouts/, inventory.toml
-runon list programs
+runon init ~/ops           # scaffolds programs/, functions/, layouts/, inventory.toml
+runon list programs        # from anywhere; the path is remembered
 runon local run-program --program hello-world --verbose
 ```
+
+## One workspace, remembered
+
+> **Changed in 0.3.0.** Earlier versions searched upward from your current
+> directory, so the same command listed different programs depending on where
+> you stood. Run `runon init <dir>` once and that stops. `-C` still works.
+
+Your programs live in **one directory**, and `runon init` records where it is:
+
+```
+~/.runon/config.toml         # written by init
+    workspace = "/Users/you/ops"
+
+~/ops/                       # the one place
+├── programs/<name>/main.sh  # a program is a directory, so it can carry its own files
+├── functions/               # shared helpers, shipped alongside every program
+├── layouts/
+└── inventory.toml           # hosts and groups
+```
+
+So `runon` means the same thing in every directory on the machine — there is
+nothing to `cd` to and no per-directory surprises:
+
+```bash
+cd /anywhere
+runon list programs                      # your programs
+runon group --group prod run-program --program deploy
+```
+
+```bash
+runon config                             # where am I pointed?
+runon config --workspace ~/other-ops     # point somewhere that already exists
+runon init ~/other-ops                   # scaffold and point, saying what it was
+runon -C ~/scratch list programs         # just this once, without repointing
+```
+
+Precedence, in one place so it cannot drift: **`-C` beats the config file, and
+nothing else is consulted.**
+
+Set `RUNON_HOME` to keep a second, separate config — a work profile and a
+personal one, say.
+
+The `examples/` directory in this repo is a workspace you can try without
+committing to it: `runon -C examples list programs`.
 
 > That installs exactly one package. `runon` has no runtime dependencies, and
 > the only external programs it uses are the `ssh` and `scp` you already have.
@@ -325,7 +368,8 @@ Conventions that keep this pleasant, learned the hard way:
 ## Commands
 
 ```
-runon init                          scaffold a workspace here
+runon init [DIR]                    scaffold a workspace and remember it
+runon config [--workspace DIR]      show or change which one
 runon new-program <name>            create one from the template
 runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs

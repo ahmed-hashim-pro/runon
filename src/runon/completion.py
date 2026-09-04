@@ -10,7 +10,7 @@ program and host names to the tool itself.
 
 from __future__ import annotations
 
-SCOPES = "local host group list init new-program doctor completion"
+SCOPES = "local host group list init new-program doctor completion config"
 REMOTE_VERBS = "copy copy-program run-program copy-run-program"
 
 BASH = f"""# runon bash completion.  Install with:

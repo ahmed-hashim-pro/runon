@@ -12,7 +12,7 @@ import getpass
 import sys
 from pathlib import Path
 
-from . import __version__, inventory, runner, watch
+from . import __version__, config, inventory, runner, watch
 from . import program as program_mod
 from .errors import RunonError
 from .picker import choose, choose_name
@@ -30,9 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"runon {__version__}")
     parser.add_argument(
-        "-C", "--directory", type=Path, help="workspace to use (default: search up)"
+        "-C", "--directory", type=Path, help="workspace to use, just for this command"
     )
-    parser.add_argument("--inventory", type=Path, help="inventory file (default: search up)")
+    parser.add_argument(
+        "--inventory", type=Path, help="inventory file (default: the workspace's)"
+    )
     sub = parser.add_subparsers(dest="scope", required=True)
 
     # -- local ---------------------------------------------------------------
@@ -61,12 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument(
         "what", choices=["programs", "hosts", "groups", "layouts"], nargs="?", default="programs"
     )
-    init = sub.add_parser("init", help="scaffold a workspace here")
+    init = sub.add_parser("init", help="scaffold a workspace and remember where it is")
+    init.add_argument(
+        "path", type=Path, nargs="?", help="where to put it (default: this directory)"
+    )
     init.add_argument("--force", action="store_true", help="write into a non-empty directory")
     new = sub.add_parser("new-program", help="create a program from the template")
     new.add_argument("name")
 
     sub.add_parser("doctor", help="check this machine has what runon needs")
+
+    conf = sub.add_parser("config", help="show or change where your programs live")
+    conf.add_argument("--workspace", type=Path, help="point runon at an existing workspace")
 
     completion = sub.add_parser("completion", help="print a shell completion script")
     completion.add_argument("shell", choices=["bash", "zsh", "fish"])
@@ -140,14 +148,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
-    start = args.directory or Path.cwd()
-    workspace = program_mod.find_workspace(start) or Workspace(root=start)
-    inv = inventory.load(args.inventory, start=start)
-
+    # These four run before the workspace is resolved, because a config file
+    # that will not parse must not take out the two commands that repair it.
     if args.scope == "init":
-        return _init(start, force=args.force)
-    if args.scope == "new-program":
-        return _new_program(workspace, args.name)
+        return _init(args.path or args.directory or Path.cwd(), force=args.force)
+    if args.scope == "config":
+        return _config(args.workspace)
     if args.scope == "doctor":
         from .doctor import report, run_checks
 
@@ -157,11 +163,86 @@ def _dispatch(args: argparse.Namespace) -> int:
 
         print(script(args.shell))
         return 0
+
+    workspace = _workspace_for(args)
+    # From the workspace, never from the cwd: taking programs from one place and
+    # hosts from another is worse than the wandering this replaced.
+    inv = inventory.load(args.inventory or _inventory_in(workspace))
+
+    if args.scope == "new-program":
+        return _new_program(workspace, args.name)
     if args.scope == "list":
         return _list(workspace, inv, args.what)
     if args.scope == "local":
         return _local(workspace, args)
     return _remote(workspace, inv, args)
+
+
+def _workspace_for(args) -> Workspace:
+    """-C for one command, otherwise the one place the config points at.
+
+    Falling back to the cwd matters on a machine with no config yet: `runon
+    init` needs somewhere to land, and refusing without a workspace when the
+    only way to get one is to init would be a deadlock.
+    """
+    if args.directory:
+        return Workspace(root=args.directory)
+    return config.workspace() or Workspace(root=Path.cwd())
+
+
+def _unconfigured_hint(workspace: Workspace) -> str:
+    """What to say when there is nothing to run.
+
+    Two different situations wear the same face: never having run init, and
+    pointing the config at a directory that has since moved or been deleted.
+    """
+    if config.workspace() is None:
+        return (
+            "runon has no workspace yet.\n"
+            "Run 'runon init <dir>' once — it records the path, and every "
+            "command then works from anywhere."
+        )
+    return (
+        f"the configured workspace is {workspace.root}, which has no programs.\n"
+        f"Check 'runon config', or run 'runon init {workspace.root}' to scaffold it."
+    )
+
+
+def _inventory_in(workspace: Workspace) -> Path | None:
+    candidate = workspace.root / "inventory.toml"
+    return candidate if candidate.is_file() else None
+
+
+def _config(new_root: Path | None) -> int:
+    if new_root is not None:
+        if not (new_root / "programs").is_dir():
+            raise RunonError(
+                f"{new_root} has no programs/ directory.\n"
+                f"Run 'runon init {new_root}' to scaffold one there."
+            )
+        previous = config.set_workspace(new_root)
+        _say_where(new_root, previous)
+        return 0
+
+    print(f"  config     {config.path()}")
+    try:
+        current = config.workspace()
+    except RunonError as exc:
+        # The command you reach for when something is wrong should not be the
+        # command that refuses to run because something is wrong.
+        print(f"  workspace  unreadable — {exc}")
+        return 2
+    print(f"  workspace  {current.root if current else '(not set — run runon init)'}")
+    return 0
+
+
+def _say_where(root: Path, previous: Path | None) -> None:
+    resolved = root.expanduser().resolve()
+    if previous and previous != resolved:
+        # Quietly repointing someone's whole workspace would be a nasty surprise.
+        print(f"\nworkspace set to {resolved}  (was {previous})")
+    else:
+        print(f"\nworkspace set to {resolved}")
 
 
 def _resolve_program(workspace: Workspace, name: str | None):
@@ -176,10 +257,7 @@ def _resolve_program(workspace: Workspace, name: str | None):
     # workspace yet needs to be told that, not told their program is missing
     # from an empty list.
     if not programs:
-        raise RunonError(
-            f"no programs found under {workspace.programs_path}\n\n"
-            "Run 'runon init' here to scaffold a workspace, or use -C to point at one."
-        )
+        raise RunonError(_unconfigured_hint(workspace))
     if name:
         return workspace.program(program_mod.validate_name(name))
     return choose(programs)
@@ -352,8 +430,7 @@ def _list(workspace: Workspace, inv: inventory.Inventory, what: str) -> int:
     if what == "programs":
         items = workspace.programs()
         if not items:
-            print(f"no programs under {workspace.programs_path}")
-            print("Run 'runon init' here to scaffold a workspace.")
+            print(_unconfigured_hint(workspace))
             return 0
         width = max(len(p.name) for p in items)
         for p in items:
@@ -376,6 +453,9 @@ def _init(root: Path, *, force: bool) -> int:
     created = write_workspace(root, force=force)
     for path in created:
         print(f"  created {path.relative_to(root)}")
+
+    previous = config.set_workspace(root)
+    _say_where(root, previous)
     print("\nTry:  runon list programs")
     print("      runon local run-program --program hello-world")
     return 0

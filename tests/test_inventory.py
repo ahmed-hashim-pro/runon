@@ -44,8 +44,7 @@ def test_unknown_group_lists_the_real_ones(inventory_file):
 
 def test_a_missing_inventory_is_not_an_error(tmp_path):
     # running programs locally needs no hosts at all
-    inv = inventory.load(start=tmp_path)
-    assert inv.hosts == {}
+    assert inventory.load(None).hosts == {}
 
 
 def test_a_group_naming_an_unknown_host_fails_at_load(tmp_path):
@@ -65,7 +64,6 @@ def test_broken_toml_says_so(tmp_path):
     assert "not valid TOML" in str(excinfo.value)
 
 
-def test_inventory_is_found_by_walking_up(tmp_path, inventory_file):
-    nested = tmp_path / "a" / "b" / "c"
-    nested.mkdir(parents=True)
-    assert inventory.load(start=nested).hosts.keys() == {"web-1", "web-2", "db-1"}
+def test_the_workspace_inventory_is_read_from_anywhere(tmp_path, inventory_file):
+    # the file no longer has to be near you, only near your programs
+    assert inventory.load(inventory_file).hosts.keys() == {"web-1", "web-2", "db-1"}

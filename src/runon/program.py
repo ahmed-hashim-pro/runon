@@ -127,14 +127,6 @@ class Workspace:
         ]
 
 
-def find_workspace(start: Path) -> Workspace | None:
-    """Walks up looking for a directory containing programs/."""
-    for directory in [start, *start.parents]:
-        if (directory / PROGRAMS_DIR).is_dir():
-            return Workspace(root=directory)
-    return None
-
-
 def _as_scalar(value: object, path: Path, key: str) -> str:
     """Everything reaching a shell is a string; nesting has no representation."""
     if isinstance(value, bool):
