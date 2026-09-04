@@ -9,12 +9,14 @@ has to learn the other's job.
 from __future__ import annotations
 
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ProgramInvalid, UnknownProgram
 
 ENTRY_POINT = "main.sh"
+PARAMS_FILE = "params.toml"
 PROGRAMS_DIR = "programs"
 FUNCTIONS_DIR = "functions"
 LAYOUTS_DIR = "layouts"
@@ -30,6 +32,26 @@ class Program:
     @property
     def entry_point(self) -> Path:
         return self.path / ENTRY_POINT
+
+    def params(self) -> dict[str, str]:
+        """Values from the program's own params.toml, if it has one.
+
+        Settings that belong to the program rather than to a host: a threshold,
+        a branch name, a service to restart. They travel with the program when
+        it is copied, so a target always runs it with the values it shipped
+        with, and they reach the script as RUNON_PARAM_* so a shell can read
+        them without parsing anything.
+        """
+        path = self.path / PARAMS_FILE
+        if not path.is_file():
+            return {}
+        try:
+            raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise ProgramInvalid(f"{path} is not valid TOML: {exc}") from exc
+        except OSError as exc:
+            raise ProgramInvalid(f"cannot read {path}: {exc}") from exc
+        return {str(k): _as_scalar(v, path, k) for k, v in raw.items()}
 
     @property
     def description(self) -> str:
@@ -111,6 +133,18 @@ def find_workspace(start: Path) -> Workspace | None:
         if (directory / PROGRAMS_DIR).is_dir():
             return Workspace(root=directory)
     return None
+
+
+def _as_scalar(value: object, path: Path, key: str) -> str:
+    """Everything reaching a shell is a string; nesting has no representation."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, str)):
+        return str(value)
+    raise ProgramInvalid(
+        f"{path}: {key!r} is a {type(value).__name__}. "
+        "Parameters become environment variables, so use a string, number or boolean."
+    )
 
 
 def validate_name(name: str) -> str:
