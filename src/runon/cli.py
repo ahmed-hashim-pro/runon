@@ -12,10 +12,10 @@ import getpass
 import sys
 from pathlib import Path
 
-from . import __version__, inventory, runner
+from . import __version__, inventory, runner, watch
 from . import program as program_mod
 from .errors import RunonError
-from .picker import choose
+from .picker import choose, choose_name
 from .program import Workspace
 from .report import emit
 from .transport import DEFAULT_PERSIST, LocalTransport, Result, SSHTransport
@@ -45,13 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- host ----------------------------------------------------------------
     host = sub.add_parser("host", help="run on one machine")
-    host.add_argument("--host", "-H", required=True, help="inventory name, or user@address")
+    host.add_argument("--host", "-H", help="inventory name, or user@address (prompts if omitted)")
     _add_auth_args(host)
     _add_remote_verbs(host)
 
     # -- group ---------------------------------------------------------------
     group = sub.add_parser("group", help="run on every machine in a group")
-    group.add_argument("--group", "-g", required=True, help="group name from the inventory")
+    group.add_argument("--group", "-g", help="group name from the inventory (prompts if omitted)")
     group.add_argument("--parallel", "-j", type=int, default=1, help="hosts at once (default 1)")
     _add_auth_args(group)
     _add_remote_verbs(group)
@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     new = sub.add_parser("new-program", help="create a program from the template")
     new.add_argument("name")
 
+    sub.add_parser("doctor", help="check this machine has what runon needs")
+
+    completion = sub.add_parser("completion", help="print a shell completion script")
+    completion.add_argument("shell", choices=["bash", "zsh", "fish"])
+
     return parser
 
 
@@ -74,6 +79,11 @@ def _add_auth_args(parser: argparse.ArgumentParser) -> None:
         "--ask-password",
         action="store_true",
         help="prompt for an SSH password (keys are still tried first)",
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="run in tmux, one pane per host, and attach so you can watch it",
     )
     parser.add_argument(
         "--persist",
@@ -138,6 +148,15 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _init(start, force=args.force)
     if args.scope == "new-program":
         return _new_program(workspace, args.name)
+    if args.scope == "doctor":
+        from .doctor import report, run_checks
+
+        return report(run_checks(), stream=sys.stdout)
+    if args.scope == "completion":
+        from .completion import script
+
+        print(script(args.shell))
+        return 0
     if args.scope == "list":
         return _list(workspace, inv, args.what)
     if args.scope == "local":
@@ -197,11 +216,29 @@ def _local(workspace: Workspace, args) -> int:
 
 
 def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
+    if args.scope == "host" and not args.host and not inv.hosts:
+        raise RunonError(
+            "no --host given and the inventory has no hosts.\n"
+            "Pass --host user@address, or add hosts to inventory.toml."
+        )
+    if args.scope == "group" and not args.group and not inv.groups:
+        raise RunonError(
+            "no --group given and the inventory has no groups.\n"
+            "Add a [groups.<name>] table to inventory.toml."
+        )
+
     if args.scope == "host":
-        hosts = [inv.host(args.host)]
+        name = args.host or choose_name("host", sorted(inv.hosts))
+        if name is None:
+            # Nothing was chosen, which is a decision rather than a failure.
+            return 0
+        hosts = [inv.host(name)]
         parallel = 1
     else:
-        hosts = inv.group(args.group)
+        name = args.group or choose_name("group", sorted(inv.groups))
+        if name is None:
+            return 0
+        hosts = inv.group(name)
         parallel = max(1, args.parallel)
     if not hosts:
         raise RunonError("no hosts selected")
@@ -226,6 +263,9 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     if args.dry_run:
         _print_plan(hosts, f"{args.verb} {program.name}")
         return 0
+
+    if getattr(args, "watch", False):
+        return _watch(transport, hosts, workspace, program, args)
 
     def work(host) -> Result | list[Result]:
         if args.verb == "copy-program":
@@ -276,6 +316,30 @@ def _password_for(args, hosts) -> str | None:
     if not password:
         raise RunonError("no password entered")
     return password
+
+
+def _watch(transport, hosts, workspace, program, args) -> int:
+    """Runs the program in tmux panes instead of collecting results.
+
+    Copying still happens up front and sequentially, because a pane that starts
+    by failing to find the program is not showing you anything useful.
+    """
+    if args.verb in {"copy-program", "copy-run-program"}:
+        copied = runner.fan_out(
+            hosts, lambda h: runner.copy_program(transport, h, workspace, program), parallel=1
+        )
+        failed = [r for r in copied if not r.ok]
+        if failed:
+            print("copy failed, so there is nothing to watch:", file=sys.stderr)
+            return emit(copied)
+        if args.verb == "copy-program":
+            return emit(copied)
+
+    remote_command = runner.watch_command(workspace, program, args=args.args)
+    commands = watch.build_commands(hosts, transport.ssh_argv(), remote_command)
+    session = watch.open_panes(hosts, commands, label=program.name)
+    print(f"tmux session: {session}  (reattach with: tmux attach -t {session})")
+    return 0
 
 
 def _print_plan(hosts, action: str) -> None:

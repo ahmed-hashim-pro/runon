@@ -155,6 +155,14 @@ class SSHTransport:
             argv += ["-P" if binary == "scp" else "-p", str(host.port)]
         return argv
 
+    def ssh_argv(self) -> list[str]:
+        """The ssh invocation without a target, for callers that attach a terminal.
+
+        -t forces a tty: without it a program that prompts, or colours its
+        output, behaves differently in a pane than it does by hand.
+        """
+        return [*self._base(Host(name="", address=""), "ssh"), "-t"]
+
     def run(self, host: Host, command: str, *, env: dict[str, str] | None = None) -> Result:
         argv = [*self._base(host, "ssh"), host.ssh_target, _env_prefix(env) + command]
         return self._invoke(argv, host, command)

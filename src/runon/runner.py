@@ -60,6 +60,11 @@ def program_env(
     }
     for key, value in host.vars.items():
         env[f"RUNON_VAR_{key.upper()}"] = value
+    # Program parameters are applied after host vars, so a host can be
+    # overridden by the program it is running but not the other way round —
+    # the program is the more specific statement of intent.
+    for key, value in program.params().items():
+        env[f"RUNON_PARAM_{key.upper()}"] = value
     if extra:
         env.update(extra)
     return env
@@ -100,6 +105,25 @@ def run_program(
     if argv:
         command += f" {argv}"
     return transport.run(host, command, env=program_env(host, program, functions_dir))
+
+
+def watch_command(workspace: Workspace, program: Program, *, args: list[str] | None = None) -> str:
+    """The remote command a tmux pane runs.
+
+    Unlike the collected path this keeps the shell open afterwards, so a pane
+    shows you what happened instead of closing over it.
+    """
+    directory = remote_program_dir(program.name)
+    argv = " ".join(shlex.quote(a) for a in (args or []))
+    exports = " ".join(
+        f"{k}={shlex.quote(v)}"
+        for k, v in sorted(program_env(Host("", ""), program, f"{REMOTE_ROOT}/functions").items())
+        if not k.startswith(("RUNON_HOST", "RUNON_ADDRESS"))
+    )
+    command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; {exports} ./{ENTRY_POINT}"
+    if argv:
+        command += f" {argv}"
+    return command
 
 
 def fan_out(
