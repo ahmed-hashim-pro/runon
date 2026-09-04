@@ -131,14 +131,18 @@ def _resolve_program(workspace: Workspace, name: str | None):
     # still report success, so it is refused instead.
     if name is not None and not name.strip():
         raise RunonError("--program was given an empty value")
-    if name:
-        return workspace.program(program_mod.validate_name(name))
+
     programs = workspace.programs()
+    # Checked before the name is looked up: someone who has not set up a
+    # workspace yet needs to be told that, not told their program is missing
+    # from an empty list.
     if not programs:
         raise RunonError(
-            f"no programs found under {workspace.programs_path}.\n"
-            "Run 'runon init' to scaffold one."
+            f"no programs found under {workspace.programs_path}\n\n"
+            "Run 'runon init' here to scaffold a workspace, or use -C to point at one."
         )
+    if name:
+        return workspace.program(program_mod.validate_name(name))
     return choose(programs)
 
 
@@ -226,6 +230,7 @@ def _list(workspace: Workspace, inv: inventory.Inventory, what: str) -> int:
         items = workspace.programs()
         if not items:
             print(f"no programs under {workspace.programs_path}")
+            print("Run 'runon init' here to scaffold a workspace.")
             return 0
         width = max(len(p.name) for p in items)
         for p in items:

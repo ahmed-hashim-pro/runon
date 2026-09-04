@@ -183,3 +183,34 @@ class TestPicker:
             self._programs(tmp_path), stream=io.StringIO("9\n1\n"), prompt_stream=io.StringIO()
         )
         assert chosen.name == "alpha"
+
+
+class TestFirstRun:
+    """What someone sees before they have set anything up."""
+
+    def test_running_a_program_with_no_workspace_points_at_init(self, tmp_path, capsys):
+        code, _, err = run(["local", "run-program", "--program", "anything"], tmp_path, capsys)
+
+        assert code == 2
+        # "no program named X / Available: (none)" is true and useless here
+        assert "runon init" in err
+
+    def test_listing_with_no_workspace_points_at_init(self, tmp_path, capsys):
+        code, out, _ = run(["list", "programs"], tmp_path, capsys)
+
+        assert code == 0
+        assert "runon init" in out
+
+    def test_the_scaffolded_program_is_executable(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        entry = tmp_path / "programs" / "hello-world" / "main.sh"
+        assert entry.stat().st_mode & 0o111, "main.sh is not executable"
+
+    def test_init_then_run_works_with_no_further_setup(self, tmp_path, capsys):
+        run(["init"], tmp_path, capsys)
+        code, out, _ = run(
+            ["local", "run-program", "--program", "hello-world", "-v"], tmp_path, capsys
+        )
+        # the first thing a new user does must work with no config and no hosts
+        assert code == 0
+        assert "hello from" in out

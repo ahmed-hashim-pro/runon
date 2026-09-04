@@ -33,13 +33,19 @@ has not worked.
 Python 3.11+. No runtime dependencies.
 
 ```bash
-pip install runon          # or: pipx install runon
+pipx install git+https://github.com/ahmed-hashim-pro/runon.git
+# or, into a virtualenv you manage:
+#   pip install git+https://github.com/ahmed-hashim-pro/runon.git
 
 mkdir my-ops && cd my-ops
 runon init                 # scaffolds programs/, functions/, layouts/, inventory.toml
 runon list programs
 runon local run-program --program hello-world --verbose
 ```
+
+> Not on PyPI yet, so install from the repository for now. Nothing else is
+> needed — `runon` has no runtime dependencies, and the only external programs
+> it uses are the `ssh` and `scp` you already have.
 
 That last command works immediately, with no servers and no configuration.
 
