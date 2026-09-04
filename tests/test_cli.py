@@ -214,3 +214,60 @@ class TestFirstRun:
         # the first thing a new user does must work with no config and no hosts
         assert code == 0
         assert "hello from" in out
+
+
+class TestPasswordPrompt:
+    """--ask-password, at the point where it decides whether to ask."""
+
+    def _args(self, **kw):
+        import argparse
+
+        return argparse.Namespace(**{"ask_password": True, "dry_run": False, **kw})
+
+    def test_not_asked_for_unless_requested(self):
+        assert cli._password_for(self._args(ask_password=False), [object()]) is None
+
+    def test_asked_once_for_a_single_host(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cli.getpass, "getpass", lambda *_: (calls.append(1), "pw")[1])
+
+        assert cli._password_for(self._args(), [object()]) == "pw"
+        assert len(calls) == 1
+
+    def test_asked_once_for_a_whole_group(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(cli.getpass, "getpass", lambda *_: (calls.append(1), "pw")[1])
+
+        cli._password_for(self._args(), [object()] * 20)
+
+        # twenty prompts would be its own argument against the feature
+        assert len(calls) == 1
+        warning = capsys.readouterr().err
+        assert "all 20 hosts" in warning
+        assert "ssh-copy-id" in warning
+
+    def test_a_dry_run_never_asks(self, monkeypatch):
+        monkeypatch.setattr(
+            cli.getpass, "getpass", lambda *_: pytest.fail("prompted during a dry run")
+        )
+        assert cli._password_for(self._args(dry_run=True), [object()]) is None
+
+    def test_an_empty_password_is_refused(self, monkeypatch):
+        from runon.errors import RunonError
+
+        monkeypatch.setattr(cli.getpass, "getpass", lambda *_: "")
+        with pytest.raises(RunonError):
+            cli._password_for(self._args(), [object()])
+
+    def test_the_flag_exists_on_both_remote_scopes(self):
+        parser = cli.build_parser()
+        for argv in (
+            ["host", "--host", "h", "--ask-password", "run-program", "--program", "p"],
+            ["group", "--group", "g", "--ask-password", "run-program", "--program", "p"],
+        ):
+            assert parser.parse_args(argv).ask_password is True
+
+    def test_local_has_no_password_flag(self):
+        # nothing to authenticate against; offering it would be a lie
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(["local", "run-program", "--ask-password"])

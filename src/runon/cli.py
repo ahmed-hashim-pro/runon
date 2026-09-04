@@ -8,6 +8,7 @@ tangle them.
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
@@ -45,12 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     # -- host ----------------------------------------------------------------
     host = sub.add_parser("host", help="run on one machine")
     host.add_argument("--host", "-H", required=True, help="inventory name, or user@address")
+    _add_auth_args(host)
     _add_remote_verbs(host)
 
     # -- group ---------------------------------------------------------------
     group = sub.add_parser("group", help="run on every machine in a group")
     group.add_argument("--group", "-g", required=True, help="group name from the inventory")
     group.add_argument("--parallel", "-j", type=int, default=1, help="hosts at once (default 1)")
+    _add_auth_args(group)
     _add_remote_verbs(group)
 
     # -- list / init / new ---------------------------------------------------
@@ -64,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("name")
 
     return parser
+
+
+def _add_auth_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--ask-password",
+        action="store_true",
+        help="prompt for an SSH password (keys are still tried first)",
+    )
 
 
 def _add_program_args(parser: argparse.ArgumentParser) -> None:
@@ -186,7 +197,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     if not hosts:
         raise RunonError("no hosts selected")
 
-    transport = SSHTransport()
+    transport = SSHTransport(password=_password_for(args, hosts))
 
     if args.verb == "copy":
         if args.dry_run:
@@ -217,6 +228,34 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
 
     results = runner.fan_out(hosts, work, parallel=parallel)
     return emit(results, verbose=args.verbose)
+
+
+def _password_for(args, hosts) -> str | None:
+    """Asks for a password once, if one was asked for.
+
+    Prompted here rather than per host: the same credential is used for every
+    machine in a group, and asking twenty times would be its own argument
+    against the feature. Keys are still attempted first, so a host that already
+    trusts your key never sees it.
+
+    Nothing is stored. The value lives in memory for the length of the run and
+    reaches ssh through a helper only this user can read.
+    """
+    if not getattr(args, "ask_password", False):
+        return None
+    if args.dry_run:
+        return None
+
+    if len(hosts) > 1:
+        print(
+            f"Using one password for all {len(hosts)} hosts. "
+            "If they differ, run them separately — or use ssh-copy-id and stop typing it.",
+            file=sys.stderr,
+        )
+    password = getpass.getpass("SSH password: ")
+    if not password:
+        raise RunonError("no password entered")
+    return password
 
 
 def _print_plan(hosts, action: str) -> None:
