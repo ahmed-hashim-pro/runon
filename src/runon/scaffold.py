@@ -10,14 +10,14 @@ PROGRAM_TEMPLATE = """#!/usr/bin/env sh
 # {description}
 set -eu
 
-# fleetsh exports these; they also let you run this script by hand.
-echo "program : ${{FLEETSH_PROGRAM:-{name}}}"
-echo "host    : ${{FLEETSH_HOST:-local}}"
+# runon exports these; they also let you run this script by hand.
+echo "program : ${{RUNON_PROGRAM:-{name}}}"
+echo "host    : ${{RUNON_HOST:-local}}"
 
 # Shared helpers live next door. Keep each one to a single job, and do not have
 # them call each other — a function that calls a function is a call stack you
 # will be debugging over ssh at some point.
-. "${{FLEETSH_FUNCTIONS:-$(cd "$(dirname "$0")/../../functions" && pwd)}}/say.sh"
+. "${{RUNON_FUNCTIONS:-$(cd "$(dirname "$0")/../../functions" && pwd)}}/say.sh"
 
 say "hello from $(hostname)"
 """
@@ -25,11 +25,11 @@ say "hello from $(hostname)"
 SAY_FUNCTION = """#!/usr/bin/env sh
 # Prints a message with a consistent prefix. One job, no nesting.
 say() {
-    printf '[%s] %s\\n' "${FLEETSH_HOST:-local}" "$1"
+    printf '[%s] %s\\n' "${RUNON_HOST:-local}" "$1"
 }
 """
 
-INVENTORY_TEMPLATE = """# Machines fleetsh can reach.
+INVENTORY_TEMPLATE = """# Machines runon can reach.
 #
 # `address` is handed to ssh untouched, so a Host alias from your ~/.ssh/config
 # works here, and so does user@1.2.3.4.

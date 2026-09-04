@@ -7,9 +7,9 @@ real.
 
 from __future__ import annotations
 
-from fleetsh import runner
-from fleetsh.inventory import Host
-from fleetsh.transport import FakeTransport, Result
+from runon import runner
+from runon.inventory import Host
+from runon.transport import FakeTransport, Result
 
 WEB1 = Host(name="web-1", address="web-1.example.com", user="deploy", vars={"role": "web"})
 WEB2 = Host(name="web-2", address="web-2.example.com", user="deploy")
@@ -55,15 +55,15 @@ def test_arguments_are_quoted_not_interpolated(workspace):
 def test_a_program_is_told_where_it_is_running(workspace):
     env = runner.program_env(WEB1, workspace.program("hello-world"), "/remote/functions")
 
-    assert env["FLEETSH_HOST"] == "web-1"
-    assert env["FLEETSH_ADDRESS"] == "web-1.example.com"
-    assert env["FLEETSH_PROGRAM"] == "hello-world"
-    assert env["FLEETSH_FUNCTIONS"] == "/remote/functions"
+    assert env["RUNON_HOST"] == "web-1"
+    assert env["RUNON_ADDRESS"] == "web-1.example.com"
+    assert env["RUNON_PROGRAM"] == "hello-world"
+    assert env["RUNON_FUNCTIONS"] == "/remote/functions"
 
 
 def test_host_vars_reach_the_program(workspace):
     env = runner.program_env(WEB1, workspace.program("hello-world"), "/f")
-    assert env["FLEETSH_VAR_ROLE"] == "web"
+    assert env["RUNON_VAR_ROLE"] == "web"
 
 
 def test_local_runs_point_at_the_local_functions_directory(workspace):
@@ -72,7 +72,7 @@ def test_local_runs_point_at_the_local_functions_directory(workspace):
 
     runner.run_program(fake, Host("local", "localhost"), workspace, program, remote=False)
 
-    # the bug the first smoke test caught: locally, FLEETSH_FUNCTIONS pointed at
+    # the bug the first smoke test caught: locally, RUNON_FUNCTIONS pointed at
     # the remote cache path, which does not exist on this machine
     _, command = fake.calls[0]
     assert str(workspace.root) in command or True  # command is a cd into the workspace

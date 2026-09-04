@@ -3,7 +3,7 @@
 set -eu
 
 THRESHOLD="${1:-90}"
-. "${FLEETSH_FUNCTIONS:-../../functions}/say.sh"
+. "${RUNON_FUNCTIONS:-../../functions}/say.sh"
 
 say "checking disks (threshold ${THRESHOLD}%)"
 

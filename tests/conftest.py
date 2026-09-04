@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from fleetsh.program import Workspace
-from fleetsh.scaffold import write_workspace
+from runon.program import Workspace
+from runon.scaffold import write_workspace
 
 
 @pytest.fixture

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fleetsh.inventory import Host
-from fleetsh.transport import LocalTransport, SSHTransport, _env_prefix, _looks_like_missing_sftp
+from runon.inventory import Host
+from runon.transport import LocalTransport, SSHTransport, _env_prefix, _looks_like_missing_sftp
 
 HOST = Host(name="h", address="example.com", user="deploy")
 PORTED = Host(name="p", address="example.com", port=2222)
@@ -65,7 +65,7 @@ class TestLocalTransport:
 
     def test_env_reaches_the_command(self):
         result = LocalTransport().run(
-            Host("local", "localhost"), "echo $FLEETSH_HOST", env={"FLEETSH_HOST": "abc"}
+            Host("local", "localhost"), "echo $RUNON_HOST", env={"RUNON_HOST": "abc"}
         )
         assert "abc" in result.stdout
 

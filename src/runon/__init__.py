@@ -1,11 +1,11 @@
-"""fleetsh — run shell programs locally, on one host, or across a group."""
+"""runon — run shell programs locally, on one host, or across a group."""
 
 __version__ = "0.1.0"
 
 from .errors import (
     ConfigError,
-    FleetshError,
     ProgramInvalid,
+    RunonError,
     UnknownGroup,
     UnknownHost,
     UnknownProgram,
@@ -17,7 +17,6 @@ from .transport import FakeTransport, LocalTransport, Result, SSHTransport, Tran
 __all__ = [
     "ConfigError",
     "FakeTransport",
-    "FleetshError",
     "Group",
     "Host",
     "Inventory",
@@ -25,6 +24,7 @@ __all__ = [
     "Program",
     "ProgramInvalid",
     "Result",
+    "RunonError",
     "SSHTransport",
     "Transport",
     "UnknownGroup",

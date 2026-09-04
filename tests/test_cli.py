@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from fleetsh import cli
-from fleetsh.picker import choose
-from fleetsh.program import Program
-from fleetsh.report import emit
-from fleetsh.transport import Result
+from runon import cli
+from runon.picker import choose
+from runon.program import Program
+from runon.report import emit
+from runon.transport import Result
 
 
 def run(argv, cwd: Path, capsys) -> tuple[int, str, str]:

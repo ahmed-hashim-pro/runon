@@ -18,7 +18,7 @@ from .transport import Result, Transport
 
 #: Where a copied program lands on the target. Under the user's home rather than
 #: /opt or /srv so nothing needs root to work.
-REMOTE_ROOT = "~/.fleetsh"
+REMOTE_ROOT = "~/.runon"
 
 
 @dataclass(frozen=True)
@@ -46,20 +46,20 @@ def program_env(
 
     Programs get their context from the environment rather than from arguments
     so a script stays runnable by hand: export these and `./main.sh` behaves the
-    same way fleetsh would run it.
+    same way runon would run it.
 
-    FLEETSH_FUNCTIONS differs by scope — the workspace's own functions directory
+    RUNON_FUNCTIONS differs by scope — the workspace's own functions directory
     locally, the copied one on a target. A program sources helpers from it
     either way and never has to know which it is.
     """
     env = {
-        "FLEETSH_HOST": host.name,
-        "FLEETSH_ADDRESS": host.address,
-        "FLEETSH_PROGRAM": program.name,
-        "FLEETSH_FUNCTIONS": functions_dir,
+        "RUNON_HOST": host.name,
+        "RUNON_ADDRESS": host.address,
+        "RUNON_PROGRAM": program.name,
+        "RUNON_FUNCTIONS": functions_dir,
     }
     for key, value in host.vars.items():
-        env[f"FLEETSH_VAR_{key.upper()}"] = value
+        env[f"RUNON_VAR_{key.upper()}"] = value
     if extra:
         env.update(extra)
     return env

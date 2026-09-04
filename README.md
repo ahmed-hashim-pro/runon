@@ -1,6 +1,6 @@
-# fleetsh
+# runon
 
-[![CI](https://github.com/ahmed-hashim-pro/fleetsh/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed-hashim-pro/fleetsh/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmed-hashim-pro/runon/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Keep your operational procedures as plain shell scripts, and run any of them
 identically on your laptop, on one server, or across a named group of servers.
@@ -10,12 +10,12 @@ went stale months ago. The alternatives are heavy: Ansible wants YAML, modules
 and a mental model, which is a lot to adopt when the thing you actually have is
 six shell scripts that work.
 
-`fleetsh` keeps the shell scripts. It adds the part that is genuinely annoying
+`runon` keeps the shell scripts. It adds the part that is genuinely annoying
 to write yourself — getting a script and its helpers onto twenty machines,
 running them, and telling you which ones failed.
 
 ```
-$ fleetsh group --group production copy-run-program --program disk-report
+$ runon group --group production copy-run-program --program disk-report
 web-1                    ok
 web-2                    ok
 db-1                     FAILED (1)
@@ -33,12 +33,12 @@ has not worked.
 Python 3.11+. No runtime dependencies.
 
 ```bash
-pip install fleetsh          # or: pipx install fleetsh
+pip install runon          # or: pipx install runon
 
 mkdir my-ops && cd my-ops
-fleetsh init                 # scaffolds programs/, functions/, layouts/, inventory.toml
-fleetsh list programs
-fleetsh local run-program --program hello-world --verbose
+runon init                 # scaffolds programs/, functions/, layouts/, inventory.toml
+runon list programs
+runon local run-program --program hello-world --verbose
 ```
 
 That last command works immediately, with no servers and no configuration.
@@ -59,20 +59,20 @@ inventory.toml       <- your machines
 ```
 
 Adding a capability means adding a directory. **The tool never changes.** That
-is the whole design: `fleetsh` knows how to *reach* machines, shell knows what
+is the whole design: `runon` knows how to *reach* machines, shell knows what
 to *do* on them, and neither has to learn the other's job.
 
 Programs get their context from the environment, so they stay runnable by hand:
 
 | Variable | Is |
 | --- | --- |
-| `FLEETSH_HOST` | the host's name from the inventory |
-| `FLEETSH_ADDRESS` | what ssh was given |
-| `FLEETSH_PROGRAM` | the program's own name |
-| `FLEETSH_FUNCTIONS` | where the helpers are — locally, your workspace; remotely, the copied cache |
-| `FLEETSH_VAR_*` | anything you put in that host's `vars` |
+| `RUNON_HOST` | the host's name from the inventory |
+| `RUNON_ADDRESS` | what ssh was given |
+| `RUNON_PROGRAM` | the program's own name |
+| `RUNON_FUNCTIONS` | where the helpers are — locally, your workspace; remotely, the copied cache |
+| `RUNON_VAR_*` | anything you put in that host's `vars` |
 
-Export those and `./main.sh` behaves exactly as `fleetsh` would run it. That
+Export those and `./main.sh` behaves exactly as `runon` would run it. That
 matters at 3am.
 
 ## Three scopes, the same verbs
@@ -81,9 +81,9 @@ Where the work happens and what the work is are separate questions, so they are
 separate parts of the command line:
 
 ```bash
-fleetsh local run-program --program disk-report
-fleetsh host  --host web-1        run-program --program disk-report
-fleetsh group --group production  run-program --program disk-report -j 8
+runon local run-program --program disk-report
+runon host  --host web-1        run-program --program disk-report
+runon group --group production  run-program --program disk-report -j 8
 ```
 
 The remote scopes share four verbs:
@@ -129,18 +129,18 @@ before a rollout has half-finished on the hosts it could resolve.
 
 ## It uses your ssh, on purpose
 
-`fleetsh` shells out to the system `ssh` and `scp`. It does **not** embed an SSH
+`runon` shells out to the system `ssh` and `scp`. It does **not** embed an SSH
 library.
 
 That means your `~/.ssh/config`, your agent, your keys, your `ProxyJump` and
-your `known_hosts` all work exactly as they already do, and `fleetsh` never has
+your `known_hosts` all work exactly as they already do, and `runon` never has
 to grow its own half-version of any of it. Connections run with `BatchMode=yes`,
 so a missing key fails fast instead of hanging on a password prompt — which
 across a group would otherwise mean twenty stuck connections.
 
 One thing worth knowing: OpenSSH 9 moved `scp` onto the SFTP subsystem, so a
 target with SFTP disabled fails a copy with an error that does not say so.
-`fleetsh` detects that and tells you the fix.
+`runon` detects that and tells you the fix.
 
 ## Testing your programs without servers
 
@@ -150,13 +150,13 @@ adopting a tool like this is proving your programs do the right thing *before*
 you point them at production:
 
 ```python
-from fleetsh import FakeTransport, Host, Workspace
-from fleetsh import runner
+from runon import FakeTransport, Host, Workspace
+from runon import runner
 
 fake = FakeTransport()
 runner.run_program(fake, Host("web-1", "web-1.example.com"), workspace, program)
 
-fake.calls    # [("web-1", "cd ~/.fleetsh/programs/... && ./main.sh")]
+fake.calls    # [("web-1", "cd ~/.runon/programs/... && ./main.sh")]
 fake.copies   # what would have been shipped
 ```
 
@@ -167,7 +167,7 @@ Conventions that keep this pleasant, learned the hard way:
 - **One job per function file.** `clone.sh` and `build.sh`, not `do_everything.sh`.
 - **Functions do not call functions.** A call stack you have to unpick over ssh
   at 3am is a call stack too deep. Keep the depth at one.
-- **The first comment line is the description.** `fleetsh list programs` shows
+- **The first comment line is the description.** `runon list programs` shows
   it, so it cannot drift out of date the way a separate metadata file would.
 - **Take arguments, don't hardcode.** Arguments after the program name are
   passed through, quoted: `run-program --program disk-report 80`.
@@ -175,15 +175,15 @@ Conventions that keep this pleasant, learned the hard way:
 ## Commands
 
 ```
-fleetsh init                          scaffold a workspace here
-fleetsh new-program <name>            create one from the template
-fleetsh list programs|hosts|groups|layouts
+runon init                          scaffold a workspace here
+runon new-program <name>            create one from the template
+runon list programs|hosts|groups|layouts
 
-fleetsh local run-program  [--program P] [args...]
-fleetsh local run-layout   [--layout L]
+runon local run-program  [--program P] [args...]
+runon local run-layout   [--layout L]
 
-fleetsh host  --host H  <verb> [--program P] [args...]
-fleetsh group --group G <verb> [--program P] [-j N] [args...]
+runon host  --host H  <verb> [--program P] [args...]
+runon group --group G <verb> [--program P] [-j N] [args...]
 ```
 
 ## What this does not do
@@ -191,7 +191,7 @@ fleetsh group --group G <verb> [--program P] [-j N] [args...]
 - **No rollback, no idempotency, no desired-state model.** It runs your script.
   If you need convergence, you need Ansible or Chef, and you should use them.
 - **No secrets management.** Put credentials in your own vault and have the
-  program fetch them; `fleetsh` never asks for or stores one.
+  program fetch them; `runon` never asks for or stores one.
 - **No inventory discovery.** No cloud APIs, no dynamic inventory — you write
   the file.
 - **No output streaming.** Results arrive when a host finishes, not as it goes.

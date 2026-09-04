@@ -7,7 +7,7 @@ own ssh and scp.
 
 Using the system ssh rather than an embedded SSH library is deliberate. It means
 your ~/.ssh/config, your agent, your keys, your ProxyJump and your known_hosts
-all work exactly as they already do, and fleetsh never has to grow its own
+all work exactly as they already do, and runon never has to grow its own
 half-version of any of it.
 """
 
@@ -45,7 +45,7 @@ def _env_prefix(env: dict[str, str] | None) -> str:
     """Renders env vars as an inline assignment prefix.
 
     Passing them through ssh's own SendEnv would need matching AcceptEnv on
-    every target, which is a server-side change fleetsh has no business
+    every target, which is a server-side change runon has no business
     requiring.
     """
     if not env:
@@ -56,7 +56,7 @@ def _env_prefix(env: dict[str, str] | None) -> str:
 
 
 class LocalTransport:
-    """Runs on the machine fleetsh was invoked from."""
+    """Runs on the machine runon was invoked from."""
 
     name = "local"
 

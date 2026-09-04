@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import __version__, inventory, runner
 from . import program as program_mod
-from .errors import FleetshError
+from .errors import RunonError
 from .picker import choose
 from .program import Workspace
 from .report import emit
@@ -24,10 +24,10 @@ REMOTE_VERBS = ("copy", "copy-program", "run-program", "copy-run-program")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fleetsh",
+        prog="runon",
         description="Run shell programs on your machine, one server, or a named group.",
     )
-    parser.add_argument("--version", action="version", version=f"fleetsh {__version__}")
+    parser.add_argument("--version", action="version", version=f"runon {__version__}")
     parser.add_argument(
         "-C", "--directory", type=Path, help="workspace to use (default: search up)"
     )
@@ -100,9 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(args)
-    except FleetshError as exc:
+    except RunonError as exc:
         # Expected failures print what went wrong, not where in our code it did.
-        print(f"fleetsh: {exc}", file=sys.stderr)
+        print(f"runon: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
@@ -130,14 +130,14 @@ def _resolve_program(workspace: Workspace, name: str | None):
     # Falling through to the picker would make a scripted run do nothing and
     # still report success, so it is refused instead.
     if name is not None and not name.strip():
-        raise FleetshError("--program was given an empty value")
+        raise RunonError("--program was given an empty value")
     if name:
         return workspace.program(program_mod.validate_name(name))
     programs = workspace.programs()
     if not programs:
-        raise FleetshError(
+        raise RunonError(
             f"no programs found under {workspace.programs_path}.\n"
-            "Run 'fleetsh init' to scaffold one."
+            "Run 'runon init' to scaffold one."
         )
     return choose(programs)
 
@@ -149,11 +149,11 @@ def _local(workspace: Workspace, args) -> int:
     if args.verb == "run-layout":
         layouts = workspace.layouts()
         if not layouts:
-            raise FleetshError(f"no layouts found under {workspace.layouts_path}")
+            raise RunonError(f"no layouts found under {workspace.layouts_path}")
         if args.layout:
             chosen = next((lay for lay in layouts if lay.name == args.layout), None)
             if chosen is None:
-                raise FleetshError(f"no layout named {args.layout!r}")
+                raise RunonError(f"no layout named {args.layout!r}")
         else:
             chosen = choose(layouts)
         if chosen is None:
@@ -180,7 +180,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
         hosts = inv.group(args.group)
         parallel = max(1, args.parallel)
     if not hosts:
-        raise FleetshError("no hosts selected")
+        raise RunonError("no hosts selected")
 
     transport = SSHTransport()
 
@@ -248,8 +248,8 @@ def _init(root: Path, *, force: bool) -> int:
     created = write_workspace(root, force=force)
     for path in created:
         print(f"  created {path.relative_to(root)}")
-    print("\nTry:  fleetsh list programs")
-    print("      fleetsh local run-program --program hello-world")
+    print("\nTry:  runon list programs")
+    print("      runon local run-program --program hello-world")
     return 0
 
 
