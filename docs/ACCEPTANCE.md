@@ -32,7 +32,10 @@ Then upgrade with whichever applies. **Check the version afterwards** — severa
 of these exit 0 having changed nothing:
 
 ```bash
-pipx upgrade runon --pip-args="--no-cache-dir" || pipx install --force runon
+# --force, not upgrade: `pipx upgrade` has been seen reporting "already at
+# latest version" and exiting 0 against an index that had not caught up yet,
+# so the || guard never fires and you test the old build.
+pipx install --force runon --pip-args="--no-cache-dir"
 # no pipx, and python3 is 3.11 or newer:
 python3 -m pip install -U --no-cache-dir runon
 # no pipx, and python3 is older than 3.11 — pip will refuse, so get a newer one:
@@ -44,7 +47,7 @@ runon --version
 
 `--no-cache-dir` matters: PyPI's CDN has repeatedly served a stale version.
 
-**It must be 0.13.1 or newer.** If it is older, say so and stop — everything
+**It must be 0.13.2 or newer.** If it is older, say so and stop — everything
 after this tests the wrong build. If you could not upgrade at all, say that
 too; do not test whatever happened to be installed and report it as a pass.
 

@@ -563,6 +563,23 @@ class TestFirstRunInstallsCompletion:
 
         assert installed.read_text(encoding="utf-8") == "left alone\n"
 
+    def test_version_refreshes_a_stale_completion_too(self, tmp_path, monkeypatch, capsys):
+        """--version exits inside argparse, so it used to skip the refresh.
+
+        Upgrade, check --version, see the old mtime, conclude it is broken —
+        the exact sequence a tester went through.
+        """
+        from test_cli import run
+
+        installed = self._home(tmp_path) / ".local/share/bash-completion/completions/runon"
+        run(["list", "programs"], tmp_path, capsys)
+        installed.write_text("stale\n", encoding="utf-8")
+        monkeypatch.setattr(cli, "__version__", "99.0.0")
+
+        run(["--version"], tmp_path, capsys)
+
+        assert "stale" not in installed.read_text(encoding="utf-8")
+
     def test_the_automatic_path_never_writes_outside_your_home(
         self, tmp_path, monkeypatch, capsys
     ):
