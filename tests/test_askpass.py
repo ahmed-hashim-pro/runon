@@ -6,6 +6,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from runon.askpass import askpass_env
 from runon.inventory import Host
 from runon.transport import SSHTransport
@@ -13,17 +15,24 @@ from runon.transport import SSHTransport
 SECRET = "hunter2-with spaces-and'quotes"
 
 
+PASSWORD_PROMPT = "medo@10.0.0.1's password: "
+
+
 def test_the_helper_prints_the_password_ssh_asked_for():
     with askpass_env(SECRET) as env:
-        # ssh execs this helper and reads its stdout; run it the same way.
-        output = subprocess.run([env["SSH_ASKPASS"]], capture_output=True, text=True, check=True)
+        # ssh execs this helper with the prompt as argv[1]; run it the same way.
+        output = subprocess.run(
+            [env["SSH_ASKPASS"], PASSWORD_PROMPT], capture_output=True, text=True, check=True
+        )
     assert output.stdout == SECRET
 
 
 def test_a_password_containing_shell_metacharacters_survives():
     nasty = "a b; rm -rf /$(whoami)`id`\"'"
     with askpass_env(nasty) as env:
-        output = subprocess.run([env["SSH_ASKPASS"]], capture_output=True, text=True, check=True)
+        output = subprocess.run(
+            [env["SSH_ASKPASS"], PASSWORD_PROMPT], capture_output=True, text=True, check=True
+        )
     assert output.stdout == nasty
 
 
@@ -91,3 +100,57 @@ class TestArgvChanges:
         for binary in ("ssh", "scp"):
             argv = SSHTransport(password=SECRET)._base(self.HOST, binary)
             assert not any(SECRET in part for part in argv)
+
+
+class TestItOnlyAnswersPasswords:
+    """ssh asks this helper about more than passwords.
+
+    An unknown host key asks "Are you sure you want to continue connecting?".
+    Answered with a password, ssh rejects it and asks again — forever. On CI
+    that showed up as a run that hung for the full 3600s timeout and reported
+    nothing useful, and it would do the same on the first connection to any
+    host with a stored password.
+    """
+
+    def _ask(self, prompt: str):
+        import subprocess
+
+        from runon.askpass import askpass_env
+
+        with askpass_env("s3cret") as env:
+            return subprocess.run(
+                [env["SSH_ASKPASS"], prompt], capture_output=True, text=True
+            )
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "medo@192.168.50.64's password: ",
+            "Enter passphrase for key '/home/medo/.ssh/id_ed25519': ",
+        ],
+    )
+    def test_a_password_prompt_is_answered(self, prompt):
+        result = self._ask(prompt)
+
+        assert result.returncode == 0
+        assert result.stdout == "s3cret"
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+            "The authenticity of host '[127.0.0.1]:2222' can't be established.",
+            "Please type 'yes', 'no' or the fingerprint: ",
+        ],
+    )
+    def test_anything_else_is_declined(self, prompt):
+        result = self._ask(prompt)
+
+        assert result.returncode != 0
+        assert "s3cret" not in result.stdout
+
+    def test_the_password_is_never_offered_to_a_confirmation(self):
+        """The loop is the symptom; this is the thing that caused it."""
+        result = self._ask("Are you sure you want to continue connecting (yes/no)? ")
+
+        assert result.stdout.strip() == ""
