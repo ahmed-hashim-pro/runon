@@ -8,9 +8,12 @@ what to do about it, rather than reaching for your package manager.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -78,7 +81,124 @@ def run_checks() -> list[Check]:
             required=False,
         )
     )
+
+    checks.append(_on_path_check())
+    checks.extend(_completion_checks())
     return checks
+
+
+def _on_path_check() -> Check:
+    """Whether `runon` is on PATH, which completion needs to ask it anything.
+
+    The scripts shell out to `runon list programs` for names. Installed in a
+    virtualenv you have not activated, the command works because you typed its
+    full path and the completion finds nothing, which looks like the completion
+    being broken.
+    """
+    found = shutil.which("runon")
+    return Check(
+        "runon on PATH",
+        found is not None,
+        found or "not on PATH — completion cannot ask it for program names",
+        required=False,
+    )
+
+
+def _completion_checks() -> list[Check]:
+    from . import completion
+
+    shell = completion.default_shell()
+    if shell is None:
+        return [
+            Check(
+                "completion",
+                False,
+                f"$SHELL is {os.environ.get('SHELL') or 'unset'}; "
+                "run: runon completion bash|zsh|fish --install",
+                required=False,
+            )
+        ]
+
+    checks = [_installed_check(shell, completion)]
+    if shell == "bash":
+        checks.append(_bash_completion_check())
+    if shell == "zsh":
+        checks.append(_zsh_fpath_check(completion))
+    return checks
+
+
+def _installed_check(shell: str, completion) -> Check:
+    for candidate in _completion_candidates(shell, completion):
+        if candidate.is_file():
+            return Check(f"{shell} completion", True, str(candidate), required=False)
+    return Check(
+        f"{shell} completion",
+        False,
+        "not installed — run: runon completion --install",
+        required=False,
+    )
+
+
+def _completion_candidates(shell: str, completion) -> list[Path]:
+    """Everywhere a completion for this shell could have been put.
+
+    Both the automatic install and an explicit one, plus the copy the wheel
+    ships for a system-wide install, because "is it installed" has three
+    possible answers and only one of them is the one runon would write.
+    """
+    seen = [completion.install_path(shell, user_only=True), completion.install_path(shell)]
+    name = {"bash": "runon", "zsh": "_runon", "fish": "runon.fish"}[shell]
+    subdir = {
+        "bash": "bash-completion/completions",
+        "zsh": "zsh/site-functions",
+        "fish": "fish/vendor_completions.d",
+    }[shell]
+    for prefix in (sys.prefix, "/usr/local", "/usr", Path.home() / ".local"):
+        seen.append(Path(prefix) / "share" / subdir / name)
+    return seen
+
+
+def _bash_completion_check() -> Check:
+    """bash reads the user directory only when bash-completion is installed.
+
+    Without it the file is in the right place and nothing loads it, which is
+    the most confusing way for this to fail.
+    """
+    for candidate in (
+        "/usr/share/bash-completion/bash_completion",
+        "/etc/bash_completion",
+        "/opt/homebrew/etc/profile.d/bash_completion.sh",
+        "/usr/local/etc/profile.d/bash_completion.sh",
+    ):
+        if Path(candidate).is_file():
+            return Check("bash-completion", True, candidate, required=False)
+    return Check(
+        "bash-completion",
+        False,
+        "not found — bash will not load the file. Install it: "
+        "sudo apt install bash-completion",
+        required=False,
+    )
+
+
+def _zsh_fpath_check(completion) -> Check:
+    """Whether the directory holding the completion is somewhere zsh looks.
+
+    zsh has no user completion directory by default, so a file in ~/.zsh needs
+    a line in .zshrc before anything reads it.
+    """
+    installed = completion.install_path("zsh", user_only=True)
+    if not installed.is_file():
+        for site in completion.ZSH_SITE_DIRS:
+            if (Path(site) / "_runon").is_file():
+                return Check("zsh fpath", True, f"{site} is on the default fpath", required=False)
+        return Check("zsh fpath", False, "no completion installed yet", required=False)
+    return Check(
+        "zsh fpath",
+        False,
+        f"add to ~/.zshrc above compinit:  fpath=({installed.parent} $fpath)",
+        required=False,
+    )
 
 
 def report(checks: list[Check], *, stream) -> int:
