@@ -15,7 +15,7 @@ from pathlib import Path
 from . import __version__, config, inventory, runner, watch
 from . import program as program_mod
 from .errors import RunonError
-from .picker import choose, choose_name
+from .picker import ADD_NEW, choose, choose_name
 from .program import Workspace
 from .report import emit
 from .transport import DEFAULT_PERSIST, LocalTransport, Result, SSHTransport
@@ -72,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("name")
 
     sub.add_parser("doctor", help="check this machine has what runon needs")
+
+    add_host = sub.add_parser("add-host", help="add a machine to the inventory")
+    add_host.add_argument("name", nargs="?", help="what to call it (prompts if omitted)")
+    add_host.add_argument("--address", "-a", help="hostname or IP ssh should reach")
+    add_host.add_argument("--user", "-u", help="ssh user")
+    add_host.add_argument("--port", type=int, help="ssh port, if not 22")
+    add_host.add_argument("--group", "-g", help="add it to this group as well")
+    # Deliberately no --password: it would land in your shell history, and
+    # from there in a file somebody commits.
+    add_host.add_argument("--password-env", metavar="VAR", help="env var holding its password")
+    add_host.add_argument("--password-file", metavar="PATH", help="0600 file holding it")
 
     conf = sub.add_parser("config", help="show or change where your programs live")
     conf.add_argument("--workspace", type=Path, help="point runon at an existing workspace")
@@ -155,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(args)
+    except Cancelled:
+        print("\ncancelled", file=sys.stderr)
+        return 0
     except RunonError as exc:
         # Expected failures print what went wrong, not where in our code it did.
         print(f"runon: {exc}", file=sys.stderr)
@@ -173,6 +187,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         )
     if args.scope == "config":
         return _config(args.workspace)
+    if args.scope == "add-host":
+        return _add_host(_workspace_for(args), args)
     if args.scope == "doctor":
         from .doctor import report, run_checks
 
@@ -225,6 +241,125 @@ def _empty_workspace_hint(workspace: Workspace) -> str:
 def _inventory_in(workspace: Workspace) -> Path | None:
     candidate = workspace.root / "inventory.toml"
     return candidate if candidate.is_file() else None
+
+
+def _add_host_inline(workspace: Workspace) -> tuple[str, inventory.Inventory]:
+    """Adds a host from inside the picker, then re-reads the inventory.
+
+    Re-read rather than patched in memory: the file is the inventory, and a run
+    against a host the file does not have would be a confusing thing to debug.
+    """
+    blank = argparse.Namespace(
+        name=None, address=None, user=None, port=None, group=None,
+        password_env=None, password_file=None,
+    )
+    host = _create_host(workspace, blank)
+    return host.name, inventory.load(_inventory_in(workspace))
+
+
+def _add_host(workspace: Workspace, args) -> int:
+    _create_host(workspace, args)
+    return 0
+
+
+def _create_host(workspace: Workspace, args) -> inventory.Host:
+    """Adds a host, from flags or by asking.
+
+    The two are the same path: anything a flag did not supply is asked for, so
+    a scripted call never prompts and a bare call is a short interview.
+    """
+    path = workspace.root / inventory.DEFAULT_FILENAME
+    interactive = sys.stdin.isatty()
+
+    name = args.name or _ask("Name", required=True, interactive=interactive, flag="name")
+    inventory.validate_host_name(name)
+    address = args.address or _ask(
+        "Address (hostname or IP)", required=True, interactive=interactive, flag="--address"
+    )
+    user = args.user or _ask("SSH user (blank for your own)", interactive=interactive) or None
+
+    password_env, password_file = args.password_env, args.password_file
+    if interactive and not (password_env or password_file):
+        password_env, password_file = _ask_how_it_authenticates()
+
+    host = inventory.Host(
+        name=name,
+        address=address,
+        port=args.port,
+        user=user,
+        password_env=password_env,
+        password_file=password_file,
+    )
+    if not path.is_file():
+        path.write_text("# Hosts runon can reach.\n", encoding="utf-8")
+    inventory.append_host(path, host)
+
+    print(f"  added {name}  ({host.ssh_target})  to {path}")
+    if args.group:
+        print(
+            f"\nAdd it to the {args.group!r} group by editing {path}:\n"
+            f"  [groups.{args.group}]\n"
+            f'  hosts = [..., "{name}"]'
+        )
+    if not (password_env or password_file):
+        print("\nIt will authenticate with your ssh key. Check with: runon doctor")
+    return host
+
+
+class Cancelled(Exception):
+    """The person answering stopped answering. Not a failure."""
+
+
+def _read(label: str) -> str:
+    """input(), with EOF treated as 'stopped', not as a traceback.
+
+    A closed stdin mid-interview is a pipe ending or a Ctrl-D, and neither of
+    those deserves a stack trace.
+    """
+    try:
+        return input(label).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise Cancelled from None
+
+
+def _ask(label: str, *, required: bool = False, interactive: bool = True, flag: str = "") -> str:
+    if not interactive:
+        if required:
+            raise RunonError(
+                f"{label} was not given and there is no terminal to ask on.\n"
+                f"Pass {flag}."
+            )
+        return ""
+    while True:
+        value = _read(f"{label}: ")
+        if value or not required:
+            return value
+        print("  required")
+
+
+def _ask_how_it_authenticates() -> tuple[str | None, str | None]:
+    """Asks where the password lives — never for the password itself.
+
+    Typing it here would put it in the terminal and then in the inventory,
+    which is the committed file this whole design exists to keep secrets out of.
+    """
+    print("\nHow does it authenticate?")
+    print("   1. ssh key (nothing to store)")
+    print("   2. password in an environment variable")
+    print("   3. password in a 0600 file")
+    while True:
+        choice = _read("Select 1-3 [1]: ") or "1"
+        if choice == "1":
+            return None, None
+        if choice == "2":
+            var = _read("  Variable name: ")
+            if var:
+                return var, None
+        if choice == "3":
+            file = _read("  File path: ")
+            if file:
+                return None, file
+        print("  not a choice")
 
 
 def _config(new_root: Path | None) -> int:
@@ -312,10 +447,10 @@ def _local(workspace: Workspace, args) -> int:
 
 
 def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
-    if args.scope == "host" and not args.host and not inv.hosts:
+    if args.scope == "host" and not args.host and not inv.hosts and not sys.stdin.isatty():
         raise RunonError(
             "no --host given and the inventory has no hosts.\n"
-            "Pass --host user@address, or add hosts to inventory.toml."
+            "Pass --host user@address, or run 'runon add-host'."
         )
     if args.scope == "group" and not args.group and not inv.groups:
         raise RunonError(
@@ -324,10 +459,12 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
         )
 
     if args.scope == "host":
-        name = args.host or choose_name("host", sorted(inv.hosts))
+        name = args.host or choose_name("host", sorted(inv.hosts), offer_new=True)
         if name is None:
             # Nothing was chosen, which is a decision rather than a failure.
             return 0
+        if name == ADD_NEW:
+            name, inv = _add_host_inline(workspace)
         hosts = [inv.host(name)]
         parallel = 1
     else:

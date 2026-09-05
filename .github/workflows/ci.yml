@@ -116,6 +116,30 @@ jobs:
           echo "$reply"
           echo "$reply" | grep -qx hello-world
 
+      # A run nobody is watching: a stored credential reference, no tty, no
+      # prompt. This is the whole point of password_env.
+      - name: A password can come from the environment with no terminal
+        env:
+          RUNON_HOME: /tmp/unattended
+          WEB1_PASS: not-a-real-password
+        run: |
+          /tmp/clean/bin/runon add-host web-1 --address 127.0.0.1 \
+            --user nobody --password-env WEB1_PASS < /dev/null
+          grep -q 'password_env = "WEB1_PASS"' /tmp/unattended/workspace/inventory.toml
+          # the secret itself must not be in the file runon just wrote
+          ! grep -q 'not-a-real-password' /tmp/unattended/workspace/inventory.toml
+
+      - name: An inline password in the inventory is refused
+        env:
+          RUNON_HOME: /tmp/inline
+        run: |
+          /tmp/clean/bin/runon list programs > /dev/null
+          printf '\n[hosts.bad]\naddress = "10.0.0.1"\npassword = "hunter2"\n' \
+            >> /tmp/inline/workspace/inventory.toml
+          out=$(/tmp/clean/bin/runon list hosts 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "becomes a password in git"
+
       - name: Moving the workspace is remembered
         run: |
           /tmp/clean/bin/runon init /tmp/ops
