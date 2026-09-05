@@ -456,22 +456,26 @@ def _install_completion_once() -> None:
     if os.environ.get("RUNON_NO_COMPLETION") == "1":
         return
     marker = config.home() / "completion-installed"
-    if marker.exists():
+    # The version too, not just "done". An upgrade that adds a command ships a
+    # completion that knows about it, and a marker recording only that
+    # something was installed once leaves you completing last year's verbs.
+    stamp = f"{__version__}\n"
+    if marker.exists() and marker.read_text(encoding="utf-8").endswith(stamp):
         return
 
     shell = completion.default_shell()
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         if shell is None:
-            marker.write_text("no shell detected\n", encoding="utf-8")
+            marker.write_text(f"no shell detected\n{stamp}", encoding="utf-8")
             return
         path, remaining = completion.install(shell, user_only=True)
-        marker.write_text(f"{path}\n", encoding="utf-8")
+        marker.write_text(f"{path}\n{stamp}", encoding="utf-8")
     except OSError as exc:
         # Nothing here is worth failing a run over. Record the attempt so it
         # is not retried on every command from now on.
         with suppress(OSError):
-            marker.write_text(f"failed: {exc}\n", encoding="utf-8")
+            marker.write_text(f"failed: {exc}\n{stamp}", encoding="utf-8")
         return
 
     print(f"runon: {shell} completion installed at {path}", file=sys.stderr)
@@ -495,7 +499,9 @@ def _completion(args) -> int:
 
     path, remaining = completion.install(shell)
     with suppress(OSError):
-        (config.home() / "completion-installed").write_text(f"{path}\n", encoding="utf-8")
+        (config.home() / "completion-installed").write_text(
+            f"{path}\n{__version__}\n", encoding="utf-8"
+        )
     print(f"  wrote {path}")
     if remaining:
         print(f"\n{remaining}")
@@ -776,8 +782,11 @@ def _watch(transport, hosts, workspace, program, passthrough, answers, args) -> 
         if args.verb == "copy-program":
             return emit(copied)
 
-    remote_command = runner.watch_command(workspace, program, args=passthrough, prompts=answers)
-    commands = watch.build_commands(hosts, transport.ssh_argv(), remote_command)
+    remote_commands = [
+        runner.watch_command(workspace, program, host, args=passthrough, prompts=answers)
+        for host in hosts
+    ]
+    commands = watch.build_commands(hosts, transport.ssh_argv(), remote_commands)
     session = watch.open_panes(hosts, commands, label=program.name)
     print(f"tmux session: {session}  (reattach with: tmux attach -t {session})")
     return 0

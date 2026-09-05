@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .inventory import Host
 from .program import ENTRY_POINT, Program, Workspace
-from .transport import Raw, Result, Transport
+from .transport import Raw, Result, Transport, env_prefix
 
 #: Where a copied program lands on the target. Under the user's home rather than
 #: /opt or /srv so nothing needs root to work.
@@ -146,27 +146,29 @@ def run_program(
 def watch_command(
     workspace: Workspace,
     program: Program,
+    host: Host,
     *,
     args: list[str] | None = None,
     prompts: dict[str, str] | None = None,
 ) -> str:
-    """The remote command a tmux pane runs.
+    """The remote command one tmux pane runs.
 
-    Unlike the collected path this keeps the shell open afterwards, so a pane
-    shows you what happened instead of closing over it.
+    Per host, not once for all of them. Built without a host, a pane could not
+    be told which machine it was on, so RUNON_HOST and RUNON_ADDRESS were
+    stripped and a watched program saw an empty RUNON_HOST while the same
+    program on every other path saw the right one.
+
+    The environment goes through the same builder the collected path uses.
+    Having a second copy of it here is why a Raw value came out quoted, so a
+    pane read the literal string "$HOME/.runon"/functions.
     """
     directory = remote_program_dir(program.name)
     argv = " ".join(shlex.quote(a) for a in (args or []))
-    exports = " ".join(
-        f"{k}={shlex.quote(v)}"
-        for k, v in sorted(
-            program_env(
-                Host("", ""), program, Raw(f"{REMOTE_ROOT_EXPR}/functions"), prompts
-            ).items()
-        )
-        if not k.startswith(("RUNON_HOST", "RUNON_ADDRESS"))
+    env = program_env(host, program, Raw(f"{REMOTE_ROOT_EXPR}/functions"), prompts)
+    command = (
+        f"{env_prefix(env)}cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; "
+        f"./{ENTRY_POINT}"
     )
-    command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; {exports} ./{ENTRY_POINT}"
     if argv:
         command += f" {argv}"
     return command
