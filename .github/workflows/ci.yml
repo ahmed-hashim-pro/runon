@@ -330,6 +330,53 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "t=90 b=main"
 
+      # Password auth had never been exercised end to end anywhere: the suite
+      # checks the argv and the env it builds, and CI only ever used a key. A
+      # real 8.2 client with a terminal attached prompted the operator instead
+      # of reading the stored password, and nothing here could have seen that.
+      - name: A stored password authenticates against a real sshd
+        run: |
+          sudo useradd -m -s /bin/bash runontest
+          echo 'runontest:not-a-real-password' | sudo chpasswd
+          echo 'PasswordAuthentication yes' | sudo tee /etc/ssh/sshd_config.d/runon-test.conf
+          sudo systemctl reload ssh || sudo service ssh reload
+
+          printf '%s' 'not-a-real-password' | \
+            runon add-host pw --address 127.0.0.1 --user runontest --password-stdin
+          out=$(runon host --host pw copy-run-program hello-world --verbose < /dev/null)
+          echo "$out"
+          echo "$out" | grep -q "t=90 b=main"
+
+      # The same run with a terminal attached. Before OpenSSH 8.4 the askpass
+      # helper is used only when ssh cannot open /dev/tty, so this is the case
+      # that failed on a real machine while the no-tty case above passed.
+      - name: And with a terminal attached
+        run: |
+          cat > /tmp/withtty.py <<'EOF'
+          import os, pty, sys, time
+          pid, fd = pty.fork()
+          if pid == 0:
+              os.execvp("runon", ["runon", "host", "--host", "pw",
+                                  "copy-run-program", "hello-world", "--verbose"])
+          out = b""
+          while True:
+              try:
+                  chunk = os.read(fd, 65536)
+              except OSError:
+                  break
+              if not chunk:
+                  break
+              out += chunk
+          os.waitpid(pid, 0)
+          text = out.decode(errors="replace")
+          print(text)
+          if "password:" in text.lower():
+              sys.exit("ssh prompted the terminal instead of reading the stored password")
+          if "t=90 b=main" not in text:
+              sys.exit("the program did not run")
+          EOF
+          python3 /tmp/withtty.py
+
       - name: A group of one real machine
         run: |
           printf '\n[groups.everything]\nhosts = ["localhost"]\n' >> /tmp/ops/inventory.toml

@@ -29,9 +29,12 @@ cat {path}
 def askpass_env(password: str) -> Iterator[dict[str, str]]:
     """Yields environment variables that make ssh read `password` non-interactively.
 
-    SSH_ASKPASS_REQUIRE=force is what makes this work when a terminal is
-    attached; DISPLAY is set as well because OpenSSH before 8.4 consults
-    SSH_ASKPASS only when it thinks it has no tty and a display exists.
+    Two things are needed, because two generations of OpenSSH disagree.
+    SSH_ASKPASS_REQUIRE=force covers 8.4 and later. Before that the helper is
+    consulted only when ssh cannot open /dev/tty and DISPLAY is set — so
+    DISPLAY is provided here, and the caller runs ssh in a new session so it
+    has no controlling terminal to fall back to. Without that, an 8.2 client
+    with a terminal attached prompts the operator and never reads this file.
     """
     directory = Path(tempfile.mkdtemp(prefix="runon-askpass-"))
     try:
