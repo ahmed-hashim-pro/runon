@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .inventory import Host
 from .program import ENTRY_POINT, Program, Workspace
-from .transport import Raw, Result, Transport, env_prefix
+from .transport import Raw, Result, Transport, remote_command
 
 #: Where a copied program lands on the target. Under the user's home rather than
 #: /opt or /srv so nothing needs root to work.
@@ -165,13 +165,10 @@ def watch_command(
     directory = remote_program_dir(program.name)
     argv = " ".join(shlex.quote(a) for a in (args or []))
     env = program_env(host, program, Raw(f"{REMOTE_ROOT_EXPR}/functions"), prompts)
-    command = (
-        f"{env_prefix(env)}cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; "
-        f"./{ENTRY_POINT}"
-    )
+    command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; ./{ENTRY_POINT}"
     if argv:
         command += f" {argv}"
-    return command
+    return remote_command(command, env)
 
 
 def fan_out(

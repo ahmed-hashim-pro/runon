@@ -115,13 +115,25 @@ def write_prompts(directory: Path, prompts: list[dict]) -> Path:
     return path
 
 
+def _is_a_runon_workspace(root: Path) -> bool:
+    """Whether `root` is already the shape `init` would have made.
+
+    The default workspace is scaffolded on first use, so anyone who ran any
+    command at all before typing `runon init` was met with
+    "already exists; pass --force" — on the command the README tells them to
+    start with. Filling in what is missing is what they asked for, and what
+    already runs there is left alone either way.
+    """
+    return (root / "programs").is_dir() and (root / "functions").is_dir()
+
+
 def write_workspace(root: Path, *, force: bool = False) -> list[Path]:
     programs = root / "programs"
     functions = root / "functions"
     layouts = root / "layouts"
     inventory = root / "inventory.toml"
 
-    if programs.exists() and not force:
+    if programs.exists() and not force and not _is_a_runon_workspace(root):
         raise ProgramInvalid(f"{programs} already exists; pass --force to add to it")
 
     created: list[Path] = []

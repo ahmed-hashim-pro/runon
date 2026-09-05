@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -72,6 +72,19 @@ jobs:
         run: |
           python -m venv /tmp/clean
           /tmp/clean/bin/pip install dist/*.whl
+
+      # The sdist shipped tests/test_*.py without conftest.py or pty_driver.py,
+      # so `pytest` from a released tarball failed to collect five modules.
+      # Distro packagers build from the sdist and run the suite, and nothing
+      # here was looking at it.
+      - name: The sdist carries a suite that runs
+        run: |
+          mkdir -p /tmp/fromsdist
+          tar xzf dist/*.tar.gz -C /tmp/fromsdist --strip-components=1
+          cd /tmp/fromsdist
+          python -m venv /tmp/sdistenv
+          /tmp/sdistenv/bin/pip install -q ".[dev]"
+          /tmp/sdistenv/bin/python -m pytest -q
 
       # The claim on the tin: nothing but runon itself gets installed.
       # Version-agnostic on purpose: hardcoding the number here means the next
@@ -235,6 +248,16 @@ jobs:
           echo "$out"
           echo "$out" | grep -q -- "--program"
           ! printf '%s' "$out" | grep -q "$(printf '\033')"
+
+      # The default workspace is scaffolded on first use, so `runon init` after
+      # any other command met "already exists; pass --force" -- on the command
+      # the README opens with.
+      - name: init still works after something else has run
+        env:
+          RUNON_HOME: /tmp/afterfirstrun
+        run: |
+          /tmp/clean/bin/runon list programs > /dev/null
+          /tmp/clean/bin/runon init
 
       - name: Moving the workspace is remembered
         run: |
@@ -446,6 +469,81 @@ jobs:
               sys.exit("the program did not run")
           EOF
           python3 /tmp/withtty.py
+
+      # A home directory long enough to push the control socket past the
+      # unix-socket cap made *every* remote command fail with
+      # "ControlPath too long". Corporate machines hand out homes like
+      # /home/corp.example.com/firstname.lastname, so this is not exotic.
+      - name: A long home directory does not break every remote command
+        env:
+          RUNON_HOME: /tmp/home/CORP.EXAMPLE.COM/firstname.lastname/a-long-enough-name/.runon
+        run: |
+          mkdir -p "$RUNON_HOME"
+          runon -C /tmp/ops host --host localhost run-program hello-world --verbose < /dev/null
+
+      - name: And neither does one that cannot be written
+        env:
+          RUNON_HOME: /proc/nowhere/runon
+        run: |
+          runon -C /tmp/ops host --host localhost run-program hello-world --verbose < /dev/null
+
+      # --watch had no coverage anywhere. It built its ssh argv from a blank
+      # host, so a machine with a stored credential was handed BatchMode=yes,
+      # every pane died on "Permission denied", and runon printed a session
+      # name and exited 0.
+      - name: --watch refuses to open panes nobody can log in to
+        timeout-minutes: 2
+        run: |
+          set +e
+          runon -C /tmp/ops host --host 192.0.2.1 --watch run-program hello-world \
+            < /dev/null > /tmp/watch.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/watch.log
+          test "$code" -ne 0
+          grep -q "could not log in" /tmp/watch.log
+
+      - name: A CRLF program is refused with the command that fixes it
+        run: |
+          d=/tmp/ops/programs/winbox
+          mkdir -p "$d"
+          printf '#!/bin/sh\r\necho hi\r\n' > "$d/main.sh"
+          set +e
+          runon -C /tmp/ops local run-program winbox < /dev/null > /tmp/crlf.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/crlf.log
+          test "$code" -ne 0
+          grep -q "CRLF" /tmp/crlf.log
+          rm -rf "$d"
+
+      # ssh runs the command in whatever login shell the remote account has.
+      # Against tcsh, `export` is not a command and `2>` is not a redirection,
+      # so every RUNON_* variable arrived empty, the functions library was not
+      # found, and the program still exited 0 — runon reported `ok` for a run
+      # that had none of its inputs. FreeBSD gives root a tcsh by default.
+      - name: A remote account whose login shell is not Bourne
+        timeout-minutes: 3
+        run: |
+          sudo apt-get install -y -qq tcsh
+          sudo useradd -m -s /usr/bin/tcsh cshuser
+          sudo mkdir -p /home/cshuser/.ssh
+          cat ~/.ssh/id_ed25519.pub | sudo tee /home/cshuser/.ssh/authorized_keys >/dev/null
+          sudo chown -R cshuser /home/cshuser/.ssh
+          sudo chmod 700 /home/cshuser/.ssh
+          sudo chmod 600 /home/cshuser/.ssh/authorized_keys
+
+          d=/tmp/ops/programs/shellcheck
+          mkdir -p "$d"
+          printf '#!/bin/sh\n# checks its environment survived\necho "H=[$RUNON_HOST] P=[$RUNON_PARAM_T] F=[$(test -f "$RUNON_FUNCTIONS/say.sh" && echo yes || echo no)]"\n' > "$d/main.sh"
+          printf 't = 42\n' > "$d/params.toml"
+          chmod +x "$d/main.sh"
+
+          runon add-host cshbox --address localhost --user cshuser < /dev/null
+          out=$(runon host --host cshbox copy-run-program shellcheck --verbose < /dev/null)
+          echo "$out"
+          # the whole point: an `ok` here used to mean nothing had arrived
+          echo "$out" | grep -q 'H=\[cshbox\] P=\[42\] F=\[yes\]'
 
       - name: A group of one real machine
         run: |

@@ -17,15 +17,22 @@ def _home_of_its_own(tmp_path, monkeypatch):
     silently repoints their workspace — and it would pass on CI, where the home
     directory is disposable, so nobody would find out there.
 
-    ZSH_SITE_DIRS is neutralised too: those are absolute system paths, so
-    HOME does not isolate them and a test would write a completion into
-    /opt/homebrew or /usr/share. Tests that want that path set it themselves.
+    ZSH_SITE_DIRS and doctor's searched prefixes are neutralised too: those are
+    absolute system paths, so HOME does not isolate them — a test would write a
+    completion into /opt/homebrew, or find one already sitting in /usr or in
+    the venv the suite is running from. Tests that want those set them
+    themselves.
     """
-    from runon import completion
+    from runon import completion, doctor
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("RUNON_HOME", str(tmp_path / "runon-home"))
     monkeypatch.setattr(completion, "ZSH_SITE_DIRS", ())
+    # Same reasoning for the prefixes doctor searches. sys.prefix is the one
+    # that bites: install the wheel into a venv and run the suite there — which
+    # is exactly what a distro packager does — and it holds the completion the
+    # wheel ships, so the "nothing is installed yet" check found one.
+    monkeypatch.setattr(doctor, "searched_prefixes", lambda: (tmp_path / "prefix",))
 
 
 @pytest.fixture

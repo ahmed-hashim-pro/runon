@@ -41,12 +41,41 @@ class TestInitAndList:
         assert (tmp_path / "functions" / "say.sh").is_file()
         assert (tmp_path / "inventory.toml").is_file()
 
-    def test_init_refuses_to_overwrite_without_force(self, tmp_path, capsys):
-        run(["init", str(tmp_path)], tmp_path, capsys)
+    def test_init_refuses_a_directory_that_is_not_a_workspace(self, tmp_path, capsys):
+        # programs/ here belongs to something else. Writing a hello-world and
+        # an inventory.toml into somebody's source tree is not what they asked
+        # for, so this still needs --force.
+        (tmp_path / "programs").mkdir()
+
         code, _, err = run(["init", str(tmp_path)], tmp_path, capsys)
 
         assert code == 2
         assert "already exists" in err
+
+    def test_init_is_idempotent_on_a_workspace_it_made(self, tmp_path, capsys):
+        """`runon init` after any other command used to be a wall.
+
+        The default workspace is scaffolded on first use, so anyone who ran
+        `runon list programs` first — which the README opens with — then got
+        "already exists; pass --force" from the command they were told to
+        start with. Nothing is overwritten either way; every write in
+        write_workspace is already guarded.
+        """
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        (tmp_path / "programs" / "hello-world" / "main.sh").write_text("#!/bin/sh\necho mine\n")
+
+        code, _, _ = run(["init", str(tmp_path)], tmp_path, capsys)
+
+        assert code == 0
+        assert "echo mine" in (tmp_path / "programs" / "hello-world" / "main.sh").read_text()
+
+    def test_init_fills_in_what_is_missing(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        (tmp_path / "functions" / "say.sh").unlink()
+
+        run(["init", str(tmp_path)], tmp_path, capsys)
+
+        assert (tmp_path / "functions" / "say.sh").is_file()
 
     def test_list_programs_shows_the_description_from_main_sh(self, tmp_path, capsys):
         run(["init", str(tmp_path)], tmp_path, capsys)
@@ -825,6 +854,73 @@ class TestHeadless:
         argv = ["host", "--host", "h", "--headless", "run-program", "p"]
         assert parser.parse_args(argv).no_tmux is True
 
+    def test_a_pane_gets_the_argv_for_its_own_host(self, monkeypatch, inventory_file, capsys):
+        """Built from a blank host, every pane was handed the wrong auth flags.
+
+        A machine whose credential is named in the inventory looked like a
+        machine with no credential, so the pane got BatchMode=yes — which
+        forbids the prompt it needed — and died on "Permission denied" while
+        runon printed a session name and exited 0.
+        """
+        from runon.transport import FakeTransport
+
+        asked: list[str] = []
+
+        class Recording(FakeTransport):
+            def ssh_argv(self, host=None):
+                asked.append(host.name if host is not None else "<blank>")
+                return ["ssh"]
+
+        transport = Recording()
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        monkeypatch.setattr(cli.watch, "open_panes", lambda *a, **k: "s1")
+
+        run(["group", "--group", "web", "--watch", "run-program", "hello-world"], root, capsys)
+
+        assert asked == ["web-1", "web-2"]
+
+    def test_it_logs_in_once_before_opening_a_pane(
+        self, fake, monkeypatch, inventory_file, capsys
+    ):
+        """The login a pane cannot do for itself.
+
+        A pane's ssh starts after runon has exited, so the askpass helper it
+        would need is already deleted. It reaches a password host by reusing
+        the master this opens.
+        """
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        monkeypatch.setattr(cli.watch, "open_panes", lambda *a, **k: "s1")
+
+        run(["group", "--group", "web", "--watch", "run-program", "hello-world"], root, capsys)
+
+        assert ("web-1", "true") in fake.calls
+        assert ("web-2", "true") in fake.calls
+
+    def test_a_host_that_cannot_log_in_gets_no_pane_and_fails_the_run(
+        self, fake, monkeypatch, inventory_file, capsys
+    ):
+        from runon.transport import Result
+
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        fake.responses = {"true": Result("", "true", 255, "", "Permission denied")}
+        monkeypatch.setattr(
+            cli.watch, "open_panes",
+            lambda *a, **k: pytest.fail("opened a pane nobody could log in to"),
+        )
+
+        code, _, err = run(
+            ["group", "--group", "web", "--watch", "run-program", "hello-world"], root, capsys
+        )
+
+        # It used to print a session name and exit 0 while every pane in it sat
+        # dead on a login failure.
+        assert code == 1
+        assert "could not log in" in err
+
     def test_watch_alone_still_opens_panes(self, fake, monkeypatch, inventory_file, capsys):
         root = inventory_file.parent
         run(["init", str(root)], root, capsys)
@@ -840,3 +936,44 @@ class TestHeadless:
 
         assert code == 0
         assert opened["n"] == 2
+
+
+class TestTheLayoutPickerNamesItsOwnFlag:
+    """`run-layout` has no --program, and the error told you to pass one.
+
+    Layouts go through the same picker as programs, and it hard-coded
+    "--program" in the message it prints when there is nobody to ask. A
+    scheduled `runon local run-layout` was told to pass a flag that
+    subcommand does not accept.
+    """
+
+    def _workspace(self, tmp_path, capsys, layouts=("split", "second")):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        for name in layouts:
+            (tmp_path / "layouts" / f"{name}.sh").write_text("#!/bin/sh\ntrue\n")
+        return tmp_path
+
+    def test_it_names_layout_not_program(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys)
+
+        code, _, err = run(["local", "run-layout"], root, capsys)
+
+        assert code == 2
+        assert "--layout" in err
+        assert "--program" not in err
+
+    def test_it_still_lists_the_choices(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys)
+
+        _, _, err = run(["local", "run-layout"], root, capsys)
+
+        assert "split" in err and "second" in err
+
+    def test_run_program_still_names_program(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys)
+        (root / "programs" / "second").mkdir()
+        (root / "programs" / "second" / "main.sh").write_text("#!/bin/sh\ntrue\n")
+
+        _, _, err = run(["local", "run-program"], root, capsys)
+
+        assert "--program" in err

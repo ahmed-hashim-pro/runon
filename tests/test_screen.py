@@ -230,3 +230,26 @@ class TestDrawing:
 
 def _visible(line: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line)
+
+
+class TestTheRelatedField:
+    """meta.toml accepted `related` and nothing ever showed it.
+
+    write_meta would even write one for you, from the new-program interview,
+    so a program could declare a field and get silence back.
+    """
+
+    def _render(self, **kw):
+        state = screen._State([screen.Choice(key="a", label="a", **kw)], [], "t")
+        return state.render()
+
+    def test_related_reaches_the_preview(self):
+        assert "see also: rollback, verify" in self._render(related=("rollback", "verify"))
+
+    def test_nothing_is_drawn_when_there_are_none(self):
+        assert "see also" not in self._render()
+
+    def test_it_sits_alongside_tags(self):
+        drawn = self._render(tags=("api",), related=("rollback",))
+
+        assert "tags: api" in drawn and "see also: rollback" in drawn

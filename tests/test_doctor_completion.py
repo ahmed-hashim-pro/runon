@@ -47,9 +47,21 @@ class TestIsItInstalled:
         shipped = prefix / "share/bash-completion/completions/runon"
         shipped.parent.mkdir(parents=True)
         shipped.write_text("#", encoding="utf-8")
-        monkeypatch.setattr(doctor.sys, "prefix", str(prefix))
+        monkeypatch.setattr(doctor, "searched_prefixes", lambda: (prefix,))
 
         assert _check(doctor.run_checks(), "bash completion").ok
+
+    def test_the_wheels_own_copy_does_not_look_like_a_users(self, tmp_path, monkeypatch):
+        """The isolation this whole fixture exists for, stated as a test.
+
+        Installed as a wheel into a venv — which is what a distro packager
+        does before running the suite — sys.prefix holds the completion the
+        wheel itself ships. Without neutralising the searched prefixes, the
+        "nothing is installed yet" check found that and the suite failed on a
+        correctly built package.
+        """
+        assert str(tmp_path) in str(doctor.searched_prefixes()[0])
+        assert not _check(doctor.run_checks(), "bash completion").ok
 
 
 class TestTheThingsThatSilentlyStopItWorking:
@@ -183,3 +195,61 @@ class TestTheShellRemembersNoCompletion:
         # "ok" with tab still doing nothing is the report we got
         assert check.ok
         assert "restarting" in check.detail
+
+
+class TestDoctorNeverHangs:
+    """`doctor` is the command you run when something is already wrong.
+
+    `ssh-add -l` was the one subprocess here without a deadline, so a stale
+    SSH_AUTH_SOCK — or an agent forwarded over a connection that has since
+    died — made it wait forever with nothing on screen.
+    """
+
+    def test_an_agent_that_never_answers_does_not_stop_the_report(self, monkeypatch):
+        import subprocess
+
+        real = subprocess.run
+
+        def hang(argv, **kw):
+            if argv[0] == "ssh-add":
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout", 5))
+            return real(argv, **kw)
+
+        monkeypatch.setattr(doctor.subprocess, "run", hang)
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+        checks = doctor.run_checks()
+
+        agent = next(c for c in checks if c.name == "ssh-agent")
+        assert agent.ok is False
+        assert "SSH_AUTH_SOCK" in agent.detail
+
+    def test_a_hung_agent_is_not_reported_as_healthy(self, monkeypatch):
+        import subprocess
+
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(
+            doctor.subprocess, "run",
+            lambda argv, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired(argv, 5)),
+        )
+
+        agent = next(c for c in doctor.run_checks() if c.name == "ssh-agent")
+
+        assert agent.ok is False
+
+    def test_ssh_add_is_given_a_deadline(self, monkeypatch):
+        seen = {}
+        import subprocess
+
+        real = subprocess.run
+
+        def record(argv, **kw):
+            if argv[0] == "ssh-add":
+                seen["timeout"] = kw.get("timeout")
+            return real(argv, **kw)
+
+        monkeypatch.setattr(doctor.subprocess, "run", record)
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+        doctor.run_checks()
+
+        assert seen.get("timeout")

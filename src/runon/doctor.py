@@ -64,13 +64,25 @@ def run_checks() -> list[Check]:
 
     agent = shutil.which("ssh-add")
     loaded = ""
+    have_keys = False
     if agent:
-        out = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True, check=False)
-        if out.returncode == 0:
-            loaded = f"{len(out.stdout.strip().splitlines())} key(s) loaded"
+        try:
+            # A deadline, like every other command here. A stale SSH_AUTH_SOCK
+            # or an agent forwarded over a connection that has since died makes
+            # this never return, and `doctor` is the command you run when
+            # something is already wrong — it must not be the thing that hangs.
+            out = subprocess.run(
+                ["ssh-add", "-l"], capture_output=True, text=True, timeout=5, check=False
+            )
+        except (OSError, subprocess.SubprocessError):
+            loaded = "ssh-add did not answer within 5s — is SSH_AUTH_SOCK stale?"
         else:
-            loaded = "no keys loaded — you will be asked for passwords"
-    checks.append(Check("ssh-agent", bool(loaded and "no keys" not in loaded), loaded, False))
+            if out.returncode == 0:
+                have_keys = True
+                loaded = f"{len(out.stdout.strip().splitlines())} key(s) loaded"
+            else:
+                loaded = "no keys loaded — you will be asked for passwords"
+    checks.append(Check("ssh-agent", have_keys, loaded, False))
 
     copy_id = shutil.which("ssh-copy-id")
     checks.append(
@@ -158,9 +170,22 @@ def _completion_candidates(shell: str, completion) -> list[Path]:
         "zsh": "zsh/site-functions",
         "fish": "fish/vendor_completions.d",
     }[shell]
-    for prefix in (sys.prefix, "/usr/local", "/usr", Path.home() / ".local"):
+    for prefix in searched_prefixes():
         seen.append(Path(prefix) / "share" / subdir / name)
     return seen
+
+
+def searched_prefixes() -> tuple:
+    """Prefixes a completion could have been installed under, besides ours.
+
+    A function rather than an inlined tuple so the suite can neutralise it, the
+    way conftest already neutralises completion.ZSH_SITE_DIRS. These are
+    absolute system paths, so an isolated HOME does not isolate them: run the
+    suite against a wheel-installed runon — which is what a distro packager
+    does — and sys.prefix holds the completion the wheel itself ships, so the
+    "nothing is installed" test saw one and failed.
+    """
+    return (sys.prefix, "/usr/local", "/usr", Path.home() / ".local")
 
 
 def _bash_completion_check() -> Check:

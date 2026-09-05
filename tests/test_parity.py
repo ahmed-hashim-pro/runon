@@ -225,10 +225,10 @@ class TestVersion:
         assert runon.__version__ == version("runon")
 
     def test_it_matches_pyproject(self):
-        import tomllib
         from pathlib import Path
 
         import runon
+        from runon import _tomllib as tomllib
 
         pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
         declared = tomllib.loads(pyproject.read_text())["project"]["version"]
@@ -635,7 +635,7 @@ class TestShippedCompletions:
         )
 
     def test_the_wheel_declares_all_three(self):
-        import tomllib
+        from runon import _tomllib as tomllib
 
         declared = tomllib.loads(
             (self._root() / "pyproject.toml").read_text(encoding="utf-8")
@@ -643,3 +643,123 @@ class TestShippedCompletions:
 
         shipped = {file for files in declared.values() for file in files}
         assert shipped == set(self.FILES.values())
+
+
+class TestTheCommandReferenceIsTrue:
+    """The README's flag table said something the parser rejects.
+
+    `-y/--yes`, `--dry-run` and `--verbose` were listed among the flags that go
+    before the verb, next to `--ask-password` and `--persist`, which really do.
+    They are defined on the verb instead, so anyone copying the reference got
+    `error: unrecognized arguments: --dry-run`. Every worked example in the
+    prose was right; only the summary anybody would scan was wrong.
+    """
+
+    #: Before the verb. These are about reaching the machines.
+    WHERE = [
+        (["--ask-password"], "ask_password"),
+        (["--persist", "5m"], "persist"),
+        (["--watch"], "watch"),
+        (["--no-tmux"], "no_tmux"),
+    ]
+    #: After the verb. These are about the program being run.
+    RUN = [
+        (["--yes"], "yes"),
+        (["-y"], "yes"),
+        (["--dry-run"], "dry_run"),
+        (["--verbose"], "verbose"),
+        (["-v"], "verbose"),
+        (["--timeout", "60"], "timeout"),
+    ]
+
+    def _readme(self) -> str:
+        return (
+            Path(__file__).resolve().parent.parent / "README.md"
+        ).read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("flag,dest", WHERE)
+    def test_a_where_flag_parses_before_the_verb(self, flag, dest):
+        argv = ["host", "--host", "h", *flag, "run-program", "--program", "p"]
+
+        assert getattr(cli.build_parser().parse_args(argv), dest) is not None
+
+    @pytest.mark.parametrize("flag,dest", RUN)
+    def test_a_run_flag_parses_after_the_verb(self, flag, dest):
+        argv = ["host", "--host", "h", "run-program", "--program", "p", *flag]
+
+        assert getattr(cli.build_parser().parse_args(argv), dest) is not None
+
+    @pytest.mark.parametrize("flag,_dest", RUN)
+    def test_a_run_flag_is_not_advertised_before_the_verb(self, flag, _dest):
+        # The mistake this whole class exists for: the reference is only useful
+        # if the position it shows is the position that works.
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(
+                ["host", "--host", "h", *flag, "run-program", "--program", "p"]
+            )
+
+    def test_the_readme_separates_the_two_positions(self):
+        readme = self._readme()
+
+        assert "where-flags go before the verb" in readme
+        assert "run-flags go after the verb" in readme
+
+    def test_the_readme_tells_you_about_the_dash_dash_escape(self):
+        # Without it, `run-program deploy --since 1h` is an argparse error and
+        # `run-program deploy --dry-run` quietly becomes runon's own flag.
+        assert "--" in self._readme()
+        assert "dashes and all" in self._readme()
+
+    def test_the_readme_states_the_python_floor_the_package_declares(self):
+        from runon import _tomllib as tomllib
+
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+            "requires-python"
+        ]
+
+        floor = declared.lstrip(">=")
+        assert f"Python {floor}+" in self._readme()
+
+
+class TestFishNeedsRequireParameter:
+    """`--host <TAB>` in fish offered the verbs, never the host names.
+
+    fish will not complete an option's *value* unless the option is declared
+    with -r/--require-parameter; without it the option is a boolean and the
+    -a list is offered as a command argument instead. Driven in real fish:
+
+        $ complete -C "runon host --host "
+        copy  copy-program  run-program  copy-run-program
+
+    bash and zsh look at the previous word and needed no such declaration,
+    which is why only fish was wrong.
+    """
+
+    VALUE_OPTIONS = ["program", "layout", "host", "group", "parallel", "timeout", "persist"]
+
+    def _lines(self):
+        return completion.script("fish").splitlines()
+
+    @pytest.mark.parametrize("option", VALUE_OPTIONS)
+    def test_an_option_that_takes_a_value_requires_a_parameter(self, option):
+        declared = [
+            ln for ln in self._lines()
+            if f"-l {option} " in ln or ln.endswith(f"-l {option}")
+        ]
+
+        assert declared, f"fish completion never declares --{option}"
+        for line in declared:
+            assert " -r " in line, f"--{option} is not -r, so fish will not complete its value"
+
+    def test_the_name_completing_options_still_ask_runon_for_names(self):
+        for option, listing in (("host", "list hosts"), ("group", "list groups"),
+                                ("program", "list programs"), ("layout", "list layouts")):
+            line = next(ln for ln in self._lines() if f"-l {option} " in ln)
+            assert listing in line
+
+    def test_a_boolean_flag_is_not_marked_require_parameter(self):
+        # -r on --watch would make fish demand a value for a flag that takes none
+        for line in self._lines():
+            if "-l watch" in line or "-l dry-run" in line or "-l ask-password" in line:
+                assert " -r " not in line

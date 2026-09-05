@@ -26,9 +26,19 @@ def _require_a_terminal(stream, flag: str, choices: list[str]) -> None:
 
 
 def choose(
-    programs: list[Program], *, stream=None, prompt_stream=None, rich: bool | None = None
+    programs: list[Program],
+    *,
+    stream=None,
+    prompt_stream=None,
+    rich: bool | None = None,
+    flag: str = "--program",
+    title: str = "Which program?",
 ) -> Program | None:
     """Numbered menu on stderr, so stdout stays pipeable.
+
+    `flag` is the option to name when there is nobody to ask. Layouts come
+    through here too, and this said "--program" at them — a flag `run-layout`
+    does not accept, so the one instruction the error gave could not work.
 
     Returns None if the user aborts, which the caller treats as a clean exit
     rather than an error — changing your mind is not a failure.
@@ -45,14 +55,14 @@ def choose(
     # Before the single-option shortcut, not after: a scripted run should mean
     # the same thing tomorrow, and today's only program is tomorrow's first of
     # three. Auto-selecting is a convenience for a person looking at a menu.
-    _require_a_terminal(stream, "--program", [p.name for p in programs])
+    _require_a_terminal(stream, flag, [p.name for p in programs])
     if len(programs) == 1:
         return programs[0]
 
     if rich is None:
         rich = screen.available(stream) and os.environ.get("RUNON_PLAIN") != "1"
     if rich:
-        chosen = _choose_richly(programs, stream, out)
+        chosen = _choose_richly(programs, stream, out, title)
         if chosen is not _FELL_BACK:
             return chosen
 
@@ -78,7 +88,7 @@ def choose(
 _FELL_BACK = object()
 
 
-def _choose_richly(programs: list[Program], stream, out):
+def _choose_richly(programs: list[Program], stream, out, title: str = "Which program?"):
     """Runs the full-screen picker, or gives up quietly.
 
     Every failure falls back rather than propagating: a terminal that does not
@@ -102,13 +112,14 @@ def _choose_richly(programs: list[Program], stream, out):
                 description=program.description,
                 details=(meta.details if meta else ""),
                 tags=(meta.tags if meta else ()),
+                related=(meta.related if meta else ()),
                 note=_note(meta),
             )
         )
 
     try:
         picked = screen.choose(
-            choices, title="Which program?", recent=config.recent_programs(),
+            choices, title=title, recent=config.recent_programs(),
             stream=stream, out=out,
         )
     except Exception:

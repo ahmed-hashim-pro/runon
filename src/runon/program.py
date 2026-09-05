@@ -9,10 +9,10 @@ has to learn the other's job.
 from __future__ import annotations
 
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import _tomllib as tomllib
 from .errors import ProgramInvalid, UnknownProgram
 
 ENTRY_POINT = "main.sh"
@@ -56,7 +56,9 @@ class Prompt:
     key: str
     title: str = ""
     default: str = ""
-    #: Read with getpass and never echoed.
+    #: Read with getpass and never echoed. Keeps it off the screen and out of
+    #: your shell history — not out of the process table on the target; see
+    #: the note in asking._ask.
     secret: bool = False
 
     @property
@@ -190,6 +192,32 @@ class Program:
         except OSError:
             pass
         return ""
+
+
+def check_runnable(program: Program) -> None:
+    """Refuses a main.sh the target's shell cannot execute, and says why.
+
+    Only CRLF line endings, because that is the one that arrives looking like
+    something else entirely. A script saved on Windows, or checked out with
+    `core.autocrlf=true`, has a shebang ending in a carriage return, so the
+    kernel looks for an interpreter called "/usr/bin/env sh\r" and the shell
+    reports `./main.sh: not found` — which reads as a missing program, not a
+    line ending. Workspaces are meant to be committed and shared, so this
+    happens to someone who did nothing wrong.
+    """
+    try:
+        with program.entry_point.open("rb") as handle:
+            first = handle.readline()
+    except OSError:
+        # Unreadable for some other reason: let the run report that itself
+        # rather than guessing about it here.
+        return
+    if first.endswith(b"\r\n"):
+        raise ProgramInvalid(
+            f"{program.entry_point} has Windows (CRLF) line endings, so the shell "
+            f"cannot run it — it reports 'not found' for the interpreter.\n"
+            f"Fix it with:  sed -i 's/\\r$//' {program.entry_point}"
+        )
 
 
 @dataclass(frozen=True)
