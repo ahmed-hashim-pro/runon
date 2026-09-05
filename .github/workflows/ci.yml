@@ -404,6 +404,12 @@ jobs:
       # helper is used only when ssh cannot open /dev/tty, so this is the case
       # that failed on a real machine while the no-tty case above passed.
       - name: And with a terminal attached
+        env:
+          # The program declares a prompt, and under a terminal runon rightly
+          # asks for it. This step is about ssh not asking for a password, so
+          # answer the program's question in advance rather than have the
+          # harness sit at it.
+          RUNON_PROMPT_BRANCH: main
         run: |
           cat > /tmp/withtty.py <<'EOF'
           import os, pty, select, signal, sys, time
