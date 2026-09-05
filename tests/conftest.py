@@ -11,13 +11,21 @@ from runon.scaffold import write_workspace
 
 @pytest.fixture(autouse=True)
 def _home_of_its_own(tmp_path, monkeypatch):
-    """Every test gets its own RUNON_HOME.
+    """Every test gets its own home directory.
 
-    Without this the suite writes a real config to the developer's home
-    directory and silently repoints their workspace — and it would pass on CI,
-    where the home directory is disposable, so nobody would find out there.
+    Without this the suite writes a real config to the developer's home and
+    silently repoints their workspace — and it would pass on CI, where the home
+    directory is disposable, so nobody would find out there.
+
+    ZSH_SITE_DIRS is neutralised too: those are absolute system paths, so
+    HOME does not isolate them and a test would write a completion into
+    /opt/homebrew or /usr/share. Tests that want that path set it themselves.
     """
+    from runon import completion
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("RUNON_HOME", str(tmp_path / "runon-home"))
+    monkeypatch.setattr(completion, "ZSH_SITE_DIRS", ())
 
 
 @pytest.fixture

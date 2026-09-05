@@ -638,8 +638,21 @@ $ runon group --group prod copy-run-program de<TAB>
 deploy
 ```
 
-Nothing is registered by `pip install` — a wheel has no way to run anything
-afterwards — so it is one command:
+**You do not have to do anything.** `pip install` cannot register a completion
+— a wheel has no way to run anything afterwards, and the data files that would
+place one land inside the venv for a venv or pipx install, where no shell reads
+them. So `runon` does it on its first run instead:
+
+```
+$ runon list programs
+runon: created /Users/you/.runon/workspace
+runon: bash completion installed at ~/.local/share/bash-completion/completions/runon
+  hello-world  Prints a greeting from each host.
+```
+
+Once, into your own home directory, never into a shared system directory.
+`RUNON_NO_COMPLETION=1` turns it off. To place it yourself, or somewhere
+everyone on the machine gets it:
 
 ```bash
 runon completion --install

@@ -111,19 +111,24 @@ def default_shell() -> str | None:
     return name if name in SCRIPTS else None
 
 
-def install_path(shell: str) -> Path:
+def install_path(shell: str, *, user_only: bool = False) -> Path:
     """Where this shell looks for completions, per shell.
 
     bash and fish both read a user directory with no configuration at all.
     zsh reads $fpath, which is why its answer needs a line in .zshrc — there is
     no user directory zsh searches by default.
+
+    `user_only` keeps everything under the home directory. The automatic
+    first-run install uses it: writing into a shared system directory is a
+    reasonable thing to do when someone asked for it, and not something a
+    side effect of `runon list programs` should ever do.
     """
     home = Path.home()
     if shell == "bash":
         xdg = os.environ.get("XDG_DATA_HOME") or home / ".local" / "share"
         return Path(xdg) / "bash-completion" / "completions" / "runon"
     if shell == "zsh":
-        site = _writable_zsh_site_dir()
+        site = None if user_only else _writable_zsh_site_dir()
         return (site / "_runon") if site else (home / ".zsh" / "completions" / "_runon")
     return home / ".config" / "fish" / "completions" / "runon.fish"
 
@@ -146,13 +151,13 @@ def _writable_zsh_site_dir() -> Path | None:
     return None
 
 
-def install(shell: str) -> tuple[Path, str]:
+def install(shell: str, *, user_only: bool = False) -> tuple[Path, str]:
     """Writes the completion where `shell` will find it.
 
     Returns the path and whatever still has to be done by hand — empty when
     nothing does.
     """
-    path = install_path(shell)
+    path = install_path(shell, user_only=user_only)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(script(shell), encoding="utf-8")
 
