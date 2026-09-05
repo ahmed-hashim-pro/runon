@@ -198,7 +198,16 @@ def _verb_help(verb: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        # --version and --help exit inside argparse, so the completion refresh
+        # below never ran for them. Upgrading and immediately checking
+        # --version then showed the old file and looked like nothing had
+        # happened — which is what a tester concluded before running anything
+        # else. Any invocation counts as having run runon.
+        _install_completion_once()
+        raise
     try:
         return _dispatch(args)
     except Cancelled:
