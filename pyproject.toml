@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runon"
-version = "0.10.0"
+version = "0.11.0"
 description = "Keep your operational procedures as plain shell scripts, and run any of them identically on your laptop, one server, or a named group of servers."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,6 +39,15 @@ runon = "runon.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Shipped so a system-wide or `pip install --user` install needs no command at
+# all: those land under a prefix the shells already read. A venv or pipx
+# install puts them inside the venv, where nothing reads them — that case is
+# covered by the first run instead. Kept honest by test_shipped_completions.
+[tool.setuptools.data-files]
+"share/bash-completion/completions" = ["share/bash-completion/completions/runon"]
+"share/zsh/site-functions" = ["share/zsh/site-functions/_runon"]
+"share/fish/vendor_completions.d" = ["share/fish/vendor_completions.d/runon.fish"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
