@@ -147,3 +147,39 @@ class _NoSuchPath:
 
     def home(self):
         return Path.home()
+
+
+class TestTheShellRemembersNoCompletion:
+    """bash-completion caches a negative, and that is the whole failure.
+
+    __load_completion falls through to `complete -F _minimal -- runon` when no
+    file exists yet. That registration lasts for the life of the shell, so
+    pressing tab once before installing — which is exactly what somebody does
+    after `pip install` — leaves that shell completing filenames forever.
+    """
+
+    def test_the_install_message_says_to_open_a_new_shell(self, tmp_path):
+        _, remaining = completion.install("bash")
+
+        assert "new shell" in remaining
+        assert "already decided" in remaining
+
+    def test_zsh_on_the_default_fpath_says_it_too(self, tmp_path, monkeypatch):
+        site = tmp_path / "site"
+        site.mkdir()
+        monkeypatch.setattr(completion, "ZSH_SITE_DIRS", (str(site),))
+
+        _, remaining = completion.install("zsh")
+
+        assert "new shell" in remaining
+
+    def test_doctor_says_it_even_when_everything_is_correct(self, tmp_path):
+        path = completion.install_path("bash", user_only=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#", encoding="utf-8")
+
+        check = _check(doctor.run_checks(), "bash completion")
+
+        # "ok" with tab still doing nothing is the report we got
+        assert check.ok
+        assert "restarting" in check.detail

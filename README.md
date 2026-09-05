@@ -659,7 +659,14 @@ runon: bash completion installed at ~/.local/share/bash-completion/completions/r
   hello-world  Prints a greeting from each host.
 ```
 
-If tab does nothing, `runon doctor` says which link in the chain is missing —
+**If tab does nothing, open a new shell first.** bash-completion remembers that
+a command had no completion: press tab once before the file exists — which is
+what most people do right after installing — and *that* shell keeps completing
+filenames for `runon` no matter what appears on disk afterwards. zsh caches its
+dump the same way.
+
+If a new shell still does nothing, `runon doctor` says which link in the chain
+is missing —
 the file, the shell's loader, `$fpath`, or `runon` itself not being on `PATH`:
 
 ```

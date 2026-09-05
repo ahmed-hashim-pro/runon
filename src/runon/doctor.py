@@ -130,7 +130,12 @@ def _completion_checks() -> list[Check]:
 def _installed_check(shell: str, completion) -> Check:
     for candidate in _completion_candidates(shell, completion):
         if candidate.is_file():
-            return Check(f"{shell} completion", True, str(candidate), required=False)
+            return Check(
+                f"{shell} completion",
+                True,
+                f"{candidate}  (a shell that already tried tab needs restarting)",
+                required=False,
+            )
     return Check(
         f"{shell} completion",
         False,
