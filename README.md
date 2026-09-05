@@ -103,11 +103,19 @@ anywhere to leak.
 gh workflow run release.yml -f target=testpypi
 
 # then release for real
-git tag v0.1.0 && git push origin v0.1.0
+git tag "v$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+git push origin --tags
 ```
 
 The workflow runs the suite, builds an sdist and a wheel, checks the metadata,
-and refuses to publish if the tag does not match the version in `pyproject.toml`.
+and refuses to publish unless the tag, `pyproject.toml` and the version the
+built wheel actually reports all agree — 0.2.0 shipped with the package saying
+0.1.0 because only the first two were compared.
+
+CI separately fails when `pyproject.toml` names a version that was never
+tagged. Three versions in a row were once bumped, committed and never tagged,
+so the fixes in them sat unpublished while a green build said nothing was
+wrong.
 
 </details>
 
@@ -291,9 +299,20 @@ Two consequences worth knowing:
 
 - **One attempt per host.** `NumberOfPasswordPrompts=1`, because three failed
   prompts across twenty machines is a very slow way to learn you typed it wrong.
-- **Without `--ask-password`, ssh is run with `BatchMode=yes`.** A host that
-  does not have your key fails immediately rather than blocking on a prompt —
-  across a group, the alternative is twenty stuck connections and no output.
+- **With no password to offer, ssh is run with `BatchMode=yes`.** That means no
+  `--ask-password` *and* nothing named in the inventory for that host. It fails
+  immediately rather than blocking on a prompt — across a group, the alternative
+  is twenty stuck connections and no output.
+- **It gives up the terminal.** When a password is in play, ssh is run in a
+  session with no controlling terminal. `SSH_ASKPASS_REQUIRE=force` only exists
+  from OpenSSH 8.4; before that — Ubuntu 20.04 ships 8.2 — ssh consults the
+  helper only when it cannot open `/dev/tty`, and with a terminal attached it
+  prompted the operator instead and never read the stored password.
+- **The helper answers password prompts and nothing else.** ssh also asks it
+  "Are you sure you want to continue connecting?" for an unknown host key.
+  Answered with a password, ssh rejects it and asks again, forever. An unknown
+  key now fails immediately with `Host key verification failed`, which is what
+  `ssh-keyscan` or one manual connection fixes.
 
 If hosts in a group have *different* passwords, run them separately. Better: use
 `ssh-copy-id` and stop typing passwords.
@@ -585,7 +604,7 @@ Conventions that keep this pleasant, learned the hard way:
 ## Commands
 
 ```
-runon init [DIR]                    scaffold a workspace and remember it
+runon init [DIR] [--force]          scaffold a workspace and remember it
                                     (default: ~/.runon/workspace)
 runon config [--workspace DIR]      show or change which one
 runon add-host [NAME] [-a ADDR] [-u USER] [--port N]
@@ -599,10 +618,15 @@ runon local run-program  [P] [args...]     (or --program P)
     -y/--yes   agree to a destructive program in advance
 runon local run-layout   [--layout L]
 
-runon host  [--host H]  [flags] <verb> [P] [args...]
+runon host  [-H/--host H]  [flags] <verb> [P] [args...]
 runon group [--group G] [flags] <verb> [P] [-j N] [args...]
 
-  flags: --ask-password  --persist D  --watch  --headless  --dry-run  --verbose
+  flags: --ask-password  --persist D  --watch  --headless/--no-tmux
+         -j/--parallel N (group)  -y/--yes  --dry-run  --verbose
+
+global: -C/--directory DIR   use this workspace, just for this command
+        --inventory FILE     use this inventory instead of the workspace's
+        --version
 ```
 
 Omit `--program`, `--host` or `--group` and you get a menu — on a terminal.
