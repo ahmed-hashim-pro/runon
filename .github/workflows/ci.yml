@@ -283,6 +283,10 @@ jobs:
   # against a suite that was entirely green, so this one uses a real sshd.
   integration:
     runs-on: ubuntu-latest
+    # Everything here talks to a real sshd, and the failure mode of that is a
+    # hang, not an error. A step without a deadline burned 40 minutes of a
+    # 6-hour default before anybody looked.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -402,13 +406,20 @@ jobs:
       - name: And with a terminal attached
         run: |
           cat > /tmp/withtty.py <<'EOF'
-          import os, pty, sys
+          import os, pty, select, signal, sys, time
           pid, fd = pty.fork()
           if pid == 0:
               os.execvp("runon", ["runon", "host", "--host", "pw",
                                   "copy-run-program", "hello-world", "--verbose"])
-          out = b""
-          while True:
+          # A deadline, because the thing being tested is a path whose failure
+          # mode is waiting forever. Reading until EOF is how you turn a bug
+          # into a stalled job with no output.
+          out, deadline = b"", time.time() + 90
+          while time.time() < deadline:
+              if not select.select([fd], [], [], 1)[0]:
+                  if os.waitpid(pid, os.WNOHANG)[0]:
+                      break
+                  continue
               try:
                   chunk = os.read(fd, 65536)
               except OSError:
@@ -416,7 +427,11 @@ jobs:
               if not chunk:
                   break
               out += chunk
-          os.waitpid(pid, 0)
+          else:
+              os.kill(pid, signal.SIGKILL)
+              print(out.decode(errors="replace"))
+              sys.exit("it hung: no answer within 90s")
+          os.waitpid(pid, os.WNOHANG)
           text = out.decode(errors="replace")
           print(text)
           if "password:" in text.lower():
