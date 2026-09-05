@@ -246,3 +246,140 @@ class TestPickerOffersToAddOne:
             inventory.append_host(path, Host("web 1", "10.0.0.2"))
 
         assert inventory.load(path).hosts.keys() == {"web-1"}
+
+
+class TestStoringAPasswordForYou:
+    """`add-host` can take the password and write the file itself.
+
+    Asking for a path assumed a file you had already made, with the right mode,
+    in a directory that is not the committed workspace. Three chances to get it
+    wrong before you have started.
+    """
+
+    def test_it_is_written_readable_only_by_you(self, tmp_path):
+        from runon import secrets
+
+        path = secrets.write_password_file("web-1", "s3cret")
+
+        assert path.read_text(encoding="utf-8") == "s3cret"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_the_directory_is_yours_alone(self, tmp_path):
+        from runon import secrets
+
+        secrets.write_password_file("web-1", "s3cret")
+
+        assert stat.S_IMODE(secrets.secrets_dir().stat().st_mode) == 0o700
+
+    def test_an_existing_loose_directory_is_tightened(self, tmp_path):
+        """An earlier umask, or a directory somebody made by hand."""
+        from runon import config, secrets
+
+        loose = config.home() / "secrets"
+        loose.mkdir(parents=True)
+        loose.chmod(0o755)
+
+        secrets.write_password_file("web-1", "s3cret")
+
+        assert stat.S_IMODE(loose.stat().st_mode) == 0o700
+
+    def test_it_is_never_briefly_world_readable(self, tmp_path, monkeypatch):
+        """open-then-chmod leaves a window where anyone can read it.
+
+        The mode has to be applied by the open itself, so this checks the flags
+        the file is created with rather than the mode it ends up at.
+        """
+        from runon import secrets
+
+        seen = {}
+        real_open = secrets.os.open
+
+        def spy(path, flags, mode=0o777):
+            seen["mode"] = mode
+            return real_open(path, flags, mode)
+
+        monkeypatch.setattr(secrets.os, "open", spy)
+        secrets.write_password_file("web-1", "s3cret")
+
+        assert seen["mode"] == 0o600
+
+    def test_a_rewrite_does_not_inherit_a_loose_mode(self, tmp_path):
+        """O_CREAT leaves an existing file's mode alone."""
+        from runon import secrets
+
+        path = secrets.write_password_file("web-1", "old")
+        path.chmod(0o644)
+
+        secrets.write_password_file("web-1", "new")
+
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_an_empty_password_is_refused(self, tmp_path):
+        from runon import secrets
+
+        with pytest.raises(ConfigError):
+            secrets.write_password_file("web-1", "")
+
+    def test_it_lives_outside_the_workspace(self, tmp_path, capsys):
+        """The workspace is committed. That is the entire point."""
+        from runon import config, secrets
+
+        workspace = tmp_path / "ops"
+        run(["init", str(workspace)], tmp_path, capsys)
+        path = secrets.write_password_file("web-1", "s3cret")
+
+        assert config.workspace().root.resolve() == workspace.resolve()
+        assert workspace.resolve() not in path.resolve().parents
+
+    def test_what_was_written_reads_back(self, tmp_path):
+        from runon import secrets
+        from runon.inventory import Host
+
+        path = secrets.write_password_file("web-1", "s3cret")
+        host = Host("web-1", "10.0.0.1", password_file=str(path))
+
+        assert password_for(host) == "s3cret"
+
+
+class TestPasswordFromStdin:
+    """The scripted half, so automation never puts one in argv."""
+
+    def test_it_stores_what_was_piped_and_records_the_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import io
+
+        from runon import config
+
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        monkeypatch.setattr("sys.stdin", io.StringIO("from-a-pipe\n"))
+
+        code, out, _ = run(
+            ["add-host", "web-1", "--address", "10.0.0.1", "--password-stdin"], tmp_path, capsys
+        )
+
+        assert code == 0
+        stored = config.home() / "secrets" / "web-1"
+        assert stored.read_text(encoding="utf-8") == "from-a-pipe"
+        assert stat.S_IMODE(stored.stat().st_mode) == 0o600
+        assert "0600" in out
+
+    def test_the_inventory_records_the_path_and_not_the_password(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import io
+
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        monkeypatch.setattr("sys.stdin", io.StringIO("from-a-pipe\n"))
+        run(["add-host", "web-1", "--address", "10.0.0.1", "--password-stdin"], tmp_path, capsys)
+
+        written = (tmp_path / "inventory.toml").read_text(encoding="utf-8")
+
+        assert "from-a-pipe" not in written
+        assert "password_file" in written
+
+    def test_there_is_still_no_password_flag(self):
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(
+                ["add-host", "web-1", "--password", "hunter2"]
+            )

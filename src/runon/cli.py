@@ -86,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     # from there in a file somebody commits.
     add_host.add_argument("--password-env", metavar="VAR", help="env var holding its password")
     add_host.add_argument("--password-file", metavar="PATH", help="0600 file holding it")
+    add_host.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the password from stdin and store it 0600 (for scripts)",
+    )
 
     conf = sub.add_parser("config", help="show or change where your programs live")
     conf.add_argument("--workspace", type=Path, help="point runon at an existing workspace")
@@ -304,8 +309,15 @@ def _create_host(workspace: Workspace, args) -> inventory.Host:
     user = args.user or _ask("SSH user (blank for your own)", interactive=interactive) or None
 
     password_env, password_file = args.password_env, args.password_file
+    if getattr(args, "password_stdin", False):
+        from . import secrets
+
+        # Piped rather than typed: a password in argv is in `ps` and in your
+        # shell history, which is why there is no --password.
+        password_file = str(secrets.write_password_file(name, sys.stdin.read().strip("\n")))
+        print(f"  stored password in {password_file}  (0600)")
     if interactive and not (password_env or password_file):
-        password_env, password_file = _ask_how_it_authenticates()
+        password_env, password_file = _ask_how_it_authenticates(name)
 
     host = inventory.Host(
         name=name,
@@ -358,29 +370,66 @@ def _ask(label: str, *, required: bool = False, interactive: bool = True, flag: 
         print("  required")
 
 
-def _ask_how_it_authenticates() -> tuple[str | None, str | None]:
-    """Asks where the password lives — never for the password itself.
+def _ask_how_it_authenticates(name: str) -> tuple[str | None, str | None]:
+    """Asks how a host authenticates, and stores the password if there is one.
 
-    Typing it here would put it in the terminal and then in the inventory,
-    which is the committed file this whole design exists to keep secrets out of.
+    What goes in the inventory is always a reference. The password itself, when
+    runon is the one keeping it, goes in a 0600 file under RUNON_HOME — never
+    in the workspace, which is committed.
     """
     print("\nHow does it authenticate?")
     print("   1. ssh key (nothing to store)")
     print("   2. password in an environment variable")
-    print("   3. password in a 0600 file")
+    print("   3. password — type it now and runon will store it, 0600")
+    print("   4. password in a file I already have")
     while True:
-        choice = _read("Select 1-3 [1]: ") or "1"
+        choice = _read("Select 1-4 [1]: ") or "1"
         if choice == "1":
             return None, None
         if choice == "2":
             var = _read("  Variable name: ")
             if var:
                 return var, None
-        if choice == "3":
+        elif choice == "3":
+            path = _store_password_for(name)
+            if path:
+                return None, str(path)
+        elif choice == "4":
             file = _read("  File path: ")
             if file:
                 return None, file
         print("  not a choice")
+
+
+def _store_password_for(name: str) -> Path | None:
+    """Reads a password twice and writes it where only this user can read it.
+
+    Twice because a typo here does not fail now — it fails later, as an ssh
+    permission error on a machine you were not thinking about.
+    """
+    from . import secrets
+
+    existing = secrets.secrets_dir() / name
+    if existing.exists() and _read(
+        f"  {existing} already exists. Replace it? [y/N]: "
+    ).lower() not in {"y", "yes"}:
+        return None
+
+    for _ in range(3):
+        try:
+            password = getpass.getpass("  Password: ")
+            if password != getpass.getpass("  Again: "):
+                print("  they do not match")
+                continue
+        except (EOFError, KeyboardInterrupt):
+            raise Cancelled from None
+        if not password:
+            print("  an empty password is not a password")
+            continue
+        path = secrets.write_password_file(name, password)
+        print(f"  stored in {path}  (0600)")
+        return path
+    raise Cancelled
 
 
 def _install_completion_once() -> None:

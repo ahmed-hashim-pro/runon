@@ -166,6 +166,21 @@ jobs:
           # the secret itself must not be in the file runon just wrote
           ! grep -q 'not-a-real-password' /tmp/unattended/workspace/inventory.toml
 
+      # runon can hold the password itself. The file it writes must be
+      # unreadable by anyone else, and the secret must not reach the inventory.
+      - name: A stored password is 0600 and stays out of the workspace
+        env:
+          RUNON_HOME: /tmp/stored
+        run: |
+          printf '%s' 'not-a-real-password' | \
+            /tmp/clean/bin/runon add-host db-1 --address 10.0.0.9 --password-stdin
+          # python rather than stat(1), whose flags differ between GNU and BSD
+          mode() { python3 -c "import os,stat,sys;print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])" "$1"; }
+          test "$(mode /tmp/stored/secrets/db-1)" = "600"
+          test "$(mode /tmp/stored/secrets)" = "700"
+          ! grep -q 'not-a-real-password' /tmp/stored/workspace/inventory.toml
+          grep -q 'password_file' /tmp/stored/workspace/inventory.toml
+
       - name: An inline password in the inventory is refused
         env:
           RUNON_HOME: /tmp/inline
