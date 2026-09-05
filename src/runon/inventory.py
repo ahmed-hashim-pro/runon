@@ -6,8 +6,10 @@ to read the whole inventory in one screen and diff it in a review.
 
 from __future__ import annotations
 
+import json
+import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .errors import ConfigError, UnknownGroup, UnknownHost
@@ -29,6 +31,10 @@ class Host:
     user: str | None = None
     #: Free-form, exported to programs as RUNON_VAR_<KEY>.
     vars: dict[str, str] = field(default_factory=dict)
+    #: Environment variable holding this host's SSH password.
+    password_env: str | None = None
+    #: File holding this host's SSH password, which must be 0600.
+    password_file: str | None = None
 
     @property
     def ssh_target(self) -> str:
@@ -39,6 +45,9 @@ class Host:
 class Group:
     name: str
     hosts: tuple[str, ...]
+    #: Auth for members that do not name their own.
+    password_env: str | None = None
+    password_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,7 +78,22 @@ class Inventory:
                 f"no group named {name!r}.\n"
                 f"Known groups: {', '.join(sorted(self.groups)) or '(none)'}"
             )
-        return [self.host(h) for h in self.groups[name].hosts]
+        group = self.groups[name]
+        return [_with_group_auth(self.host(h), group) for h in group.hosts]
+
+
+def _with_group_auth(host: Host, group: Group) -> Host:
+    """Fills in the group's credential for a host that does not name its own.
+
+    A host always wins: a group default is a convenience for the twenty
+    machines that share a password, not something that can silently override
+    the one machine that does not.
+    """
+    if host.password_env or host.password_file:
+        return host
+    if not (group.password_env or group.password_file):
+        return host
+    return replace(host, password_env=group.password_env, password_file=group.password_file)
 
 
 def _looks_like_address(value: str) -> bool:
@@ -97,6 +121,27 @@ def load(path: Path | None = None) -> Inventory:
     return _parse(raw, path)
 
 
+def _auth_field(spec: dict, key: str, source: Path, kind: str, name: str) -> str | None:
+    """Reads password_env / password_file, refusing an inline password.
+
+    `password = "..."` is rejected rather than ignored: the inventory lives in
+    your workspace and gets committed, so a secret written here is a secret
+    pushed. The error says where to put it instead.
+    """
+    if "password" in spec:
+        raise ConfigError(
+            f"{source}: {kind} {name!r} has an inline 'password'.\n"
+            "The inventory is committed, so a password here becomes a password in git.\n"
+            "Use password_env = \"VAR\" or password_file = \"/path\" (0600) instead."
+        )
+    value = spec.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(f"{source}: {kind} {name!r} has a non-string {key}")
+    return value
+
+
 def _parse(raw: dict, source: Path) -> Inventory:
     hosts: dict[str, Host] = {}
     for name, spec in (raw.get("hosts") or {}).items():
@@ -112,6 +157,8 @@ def _parse(raw: dict, source: Path) -> Inventory:
             port=port,
             user=spec.get("user"),
             vars={str(k): str(v) for k, v in (spec.get("vars") or {}).items()},
+            password_env=_auth_field(spec, "password_env", source, "host", name),
+            password_file=_auth_field(spec, "password_file", source, "host", name),
         )
 
     groups: dict[str, Group] = {}
@@ -126,6 +173,65 @@ def _parse(raw: dict, source: Path) -> Inventory:
             raise ConfigError(
                 f"{source}: group {name!r} refers to unknown hosts: {', '.join(unknown)}"
             )
-        groups[name] = Group(name=name, hosts=tuple(members))
+        spec_table = spec if isinstance(spec, dict) else {}
+        groups[name] = Group(
+            name=name,
+            hosts=tuple(members),
+            password_env=_auth_field(spec_table, "password_env", source, "group", name),
+            password_file=_auth_field(spec_table, "password_file", source, "group", name),
+        )
 
     return Inventory(hosts=hosts, groups=groups, source=source)
+
+
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def validate_host_name(name: str) -> str:
+    """A host name has to be a TOML bare key, or it breaks the file it lands in.
+
+    Checked before writing rather than after: an inventory with a broken table
+    header fails every later command, and the cause is one character in a name
+    someone typed a week ago.
+    """
+    if not _BARE_KEY.match(name or ""):
+        raise ConfigError(
+            f"{name!r} is not a usable host name.\n"
+            "Use letters, digits, hyphens and underscores — it becomes a "
+            "[hosts.<name>] table in the inventory."
+        )
+    return name
+
+
+def append_host(path: Path, host: Host) -> None:
+    """Adds a host by appending a table, leaving the rest of the file alone.
+
+    Parsing and rewriting would drop every comment and reorder every table in a
+    file this project asks you to read and diff in a review. Appending cannot:
+    whatever was above stays byte for byte.
+    """
+    validate_host_name(host.name)
+    existing = load(path) if path.is_file() else Inventory(hosts={}, groups={})
+    if host.name in existing.hosts:
+        raise ConfigError(
+            f"{path} already has a host named {host.name!r}.\n"
+            "Edit the file to change it — runon only appends, so it never "
+            "rewrites what you wrote."
+        )
+
+    # A TOML basic string escapes the way a JSON one does, so a value with a
+    # quote or a backslash cannot break the file it is written into.
+    lines = [f"\n[hosts.{host.name}]", f"address = {json.dumps(host.address)}"]
+    if host.user:
+        lines.append(f"user = {json.dumps(host.user)}")
+    if host.port:
+        lines.append(f"port = {int(host.port)}")
+    if host.password_env:
+        lines.append(f"password_env = {json.dumps(host.password_env)}")
+    if host.password_file:
+        lines.append(f"password_file = {json.dumps(host.password_file)}")
+    for key, value in sorted(host.vars.items()):
+        lines.append(f"vars.{validate_host_name(key)} = {json.dumps(value)}")
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")

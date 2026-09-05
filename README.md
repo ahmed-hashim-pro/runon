@@ -294,6 +294,82 @@ Two consequences worth knowing:
 If hosts in a group have *different* passwords, run them separately. Better: use
 `ssh-copy-id` and stop typing passwords.
 
+### Adding machines
+
+Name one in a single command, for a script:
+
+```bash
+runon add-host web-1 --address 10.0.0.1 --user deploy
+runon add-host db-1  -a 10.0.0.9 --port 2222 --password-file ~/.runon/secrets/db-1
+```
+
+Or leave things out and answer:
+
+```
+$ runon add-host
+Name: web-9
+Address (hostname or IP): 10.0.0.9
+SSH user (blank for your own): deploy
+
+How does it authenticate?
+   1. ssh key (nothing to store)
+   2. password in an environment variable
+   3. password in a 0600 file
+Select 1-3 [1]: 2
+  Variable name: WEB9_PASS
+  added web-9  (deploy@10.0.0.9)
+```
+
+The same prompt is the last entry of the host menu, because the moment you
+notice a machine is missing is the moment you are looking at the list:
+
+```
+$ runon host run-program deploy
+Which host?
+   1. web-1
+   2. web-2
+   3. add a new host…
+```
+
+`add-host` **appends** to `inventory.toml` and never rewrites it, so your
+comments and ordering survive. A duplicate name is refused rather than merged.
+
+### Running with nobody watching
+
+A password can be stored — as a *reference*, never as the secret:
+
+```toml
+[hosts.web-1]
+address = "10.0.0.1"
+password_env = "WEB1_PASS"          # read from the environment
+
+[hosts.db-1]
+address = "10.0.0.9"
+password_file = "~/.runon/secrets/db-1"   # must be 0600
+
+[groups.production]
+hosts = ["web-1", "db-1"]
+password_env = "PROD_PASS"          # for members that name nothing themselves
+```
+
+```bash
+WEB1_PASS=… runon host --host web-1 run-program deploy    # no prompt, no tty
+```
+
+Three rules that are enforced, not documented:
+
+- **`password = "..."` in the inventory is an error**, not a warning. That file
+  is in your workspace and gets committed, so a secret written there is a
+  secret pushed. The message says to use `password_env` or `password_file`.
+- **A password file that is not `0600` is refused** with the `chmod` to run.
+  Warning and continuing would leave it readable for exactly as long as it
+  takes to ignore a warning.
+- **`add-host` has no `--password` flag.** It would be in your shell history.
+
+A host that names its own credential beats `--ask-password`; a group's is a
+default for members that name nothing. Everything still goes through
+`SSH_ASKPASS`, so no password reaches the process table.
+
 ### Not typing it every time
 
 **The real answer is a key.** One `ssh-copy-id` per host and you never type
@@ -371,6 +447,8 @@ Conventions that keep this pleasant, learned the hard way:
 runon init [DIR]                    scaffold a workspace and remember it
                                     (default: ~/.runon/workspace)
 runon config [--workspace DIR]      show or change which one
+runon add-host [NAME] [-a ADDR] [-u USER] [--port N]
+               [--password-env VAR | --password-file PATH]
 runon new-program <name>            create one from the template
 runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs
