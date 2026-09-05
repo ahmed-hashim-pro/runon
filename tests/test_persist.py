@@ -152,6 +152,40 @@ class TestControlPathAlwaysFits:
         assert stat_.S_IMODE(info.st_mode) == 0o700
         assert info.st_uid == os.getuid()
 
+    def test_a_mac_shaped_tmpdir_is_not_the_end_of_the_road(self, tmp_path, monkeypatch):
+        """macOS hands each user a $TMPDIR too long to be a fallback.
+
+        It looks like /var/folders/xy/<28 chars>/T/ — 47 characters before
+        anything is appended, which is more than the whole budget. The first
+        version of this fix therefore turned multiplexing off on every Mac
+        while fixing it for long home directories, and CI caught it where no
+        Linux box could.
+        """
+        import tempfile
+
+        monkeypatch.setenv("RUNON_HOME", str(tmp_path / ("d" * 200)))
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        mac_shaped = tmp_path / "var" / "folders" / "xy" / ("c" * 28) / "T"
+        mac_shaped.mkdir(parents=True)
+        monkeypatch.setenv("TMPDIR", str(mac_shaped))
+        monkeypatch.setattr(tempfile, "tempdir", None)
+
+        chosen = control_path()
+
+        assert chosen is not None
+        assert len(chosen) <= MAX_SOCKET_DIR
+
+    def test_there_is_always_a_candidate_short_enough(self, tmp_path, monkeypatch):
+        import tempfile
+
+        monkeypatch.setenv("RUNON_HOME", str(tmp_path / ("d" * 200)))
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / ("e" * 200)))
+        monkeypatch.setenv("TMPDIR", str(tmp_path / ("f" * 200)))
+        monkeypatch.setattr(tempfile, "tempdir", None)
+
+        # Every configurable location is hopeless; /tmp is the backstop.
+        assert control_path() is not None
+
     def test_a_hostile_symlink_in_tmp_is_refused(self, tmp_path, monkeypatch):
         monkeypatch.setenv("RUNON_HOME", str(tmp_path / ("d" * 200)))
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)

@@ -366,7 +366,14 @@ def _socket_candidates() -> list[Path]:
     if runtime:
         candidates.append(Path(runtime) / "runon")
     candidates.append(Path(tempfile.gettempdir()) / f"runon-{os.getuid()}")
-    return candidates
+    # A last resort that is short everywhere. macOS gives each user a private
+    # $TMPDIR under /var/folders/xy/<28 characters>/T/, which is 47 characters
+    # before anything is added to it — longer on its own than the whole budget.
+    # Without this a Mac had no usable candidate at all, so the fix for a long
+    # home directory turned multiplexing off on every Mac instead.
+    candidates.append(Path("/tmp") / f"runon-{os.getuid()}")
+    # Same directory twice on Linux, where gettempdir() is already /tmp.
+    return list(dict.fromkeys(candidates))
 
 
 def control_path() -> str | None:
