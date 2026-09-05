@@ -352,6 +352,10 @@ jobs:
           KbdInteractiveAuthentication no
           UsePAM yes
           PidFile /tmp/sshd_test.pid
+          # scp has spoken SFTP since OpenSSH 9, and a config this minimal has
+          # no subsystem at all — the copy then fails with "Connection closed"
+          # after the ssh half has already authenticated fine.
+          Subsystem sftp internal-sftp
           EOF
           sudo /usr/sbin/sshd -f /tmp/sshd_test.conf
           sleep 1
