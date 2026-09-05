@@ -17,11 +17,56 @@ from .errors import ProgramInvalid, UnknownProgram
 
 ENTRY_POINT = "main.sh"
 PARAMS_FILE = "params.toml"
+META_FILE = "meta.toml"
+PROMPTS_FILE = "prompts.toml"
 PROGRAMS_DIR = "programs"
 FUNCTIONS_DIR = "functions"
 LAYOUTS_DIR = "layouts"
 
 _NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+STATUSES = ("active", "experimental", "deprecated")
+
+
+@dataclass(frozen=True)
+class Meta:
+    """What a program says about itself, from an optional meta.toml.
+
+    Optional throughout: a program with no meta.toml behaves exactly as it did
+    before there was such a thing, so adding the feature cannot change what an
+    existing workspace does.
+    """
+
+    title: str = ""
+    description: str = ""
+    details: str = ""
+    category: str = "uncategorized"
+    status: str = "active"
+    destructive: bool = False
+    confirm_message: str = ""
+    tags: tuple[str, ...] = ()
+    related: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Prompt:
+    """One value a program asks for before it runs."""
+
+    key: str
+    title: str = ""
+    default: str = ""
+    #: Read with getpass and never echoed.
+    secret: bool = False
+
+    @property
+    def label(self) -> str:
+        return self.title or self.key
+
+    @property
+    def env_name(self) -> str:
+        """Where an unattended run supplies this instead of typing it."""
+        return f"RUNON_PROMPT_{self.key.upper()}"
 
 
 @dataclass(frozen=True)
@@ -32,6 +77,73 @@ class Program:
     @property
     def entry_point(self) -> Path:
         return self.path / ENTRY_POINT
+
+    def _table(self, filename: str) -> dict:
+        path = self.path / filename
+        if not path.is_file():
+            return {}
+        try:
+            return tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise ProgramInvalid(f"{path} is not valid TOML: {exc}") from exc
+        except OSError as exc:
+            raise ProgramInvalid(f"cannot read {path}: {exc}") from exc
+
+    def meta(self) -> Meta:
+        raw = self._table(META_FILE)
+        if not raw:
+            return Meta()
+        status = str(raw.get("status", "active"))
+        if status not in STATUSES:
+            raise ProgramInvalid(
+                f"{self.path / META_FILE}: status {status!r} is not one of "
+                f"{', '.join(STATUSES)}"
+            )
+        return Meta(
+            title=str(raw.get("title", "")),
+            description=str(raw.get("description", "")),
+            details=str(raw.get("details", "")),
+            category=str(raw.get("category") or "uncategorized"),
+            status=status,
+            destructive=bool(raw.get("destructive", False)),
+            confirm_message=str(raw.get("confirm_message", "")),
+            tags=tuple(str(t) for t in raw.get("tags", ())),
+            related=tuple(str(r) for r in raw.get("related", ())),
+        )
+
+    def prompts(self) -> list[Prompt]:
+        """Values this program asks for, in the order it asks.
+
+        A list of tables rather than one table: order is what makes an
+        interview read sensibly, and a TOML table has none.
+        """
+        raw = self._table(PROMPTS_FILE)
+        entries = raw.get("prompt", [])
+        if not isinstance(entries, list):
+            raise ProgramInvalid(
+                f"{self.path / PROMPTS_FILE}: expected [[prompt]] tables, "
+                f"got a {type(entries).__name__}"
+            )
+        prompts = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("key"):
+                raise ProgramInvalid(
+                    f"{self.path / PROMPTS_FILE}: every [[prompt]] needs a key"
+                )
+            key = str(entry["key"])
+            try:
+                validate_prompt_key(key)
+            except ProgramInvalid as exc:
+                raise ProgramInvalid(f"{self.path / PROMPTS_FILE}: {exc}") from None
+            prompts.append(
+                Prompt(
+                    key=key,
+                    title=str(entry.get("title", "")),
+                    default=str(entry.get("default", "")),
+                    secret=bool(entry.get("secret", False)),
+                )
+            )
+        return prompts
 
     def params(self) -> dict[str, str]:
         """Values from the program's own params.toml, if it has one.
@@ -55,11 +167,15 @@ class Program:
 
     @property
     def description(self) -> str:
-        """The first ``# comment`` line of main.sh, if there is one.
+        """meta.toml's description, else the first ``# comment`` line of main.sh.
 
-        Cheap convention, no metadata file: a program that describes itself in a
-        comment is a program whose description cannot drift out of date.
+        The comment stays the fallback so a program without meta.toml still
+        describes itself, and a description cannot drift out of date by living
+        somewhere nobody edits.
         """
+        described = self.meta().description
+        if described:
+            return described
         try:
             for line in self.entry_point.read_text(encoding="utf-8").splitlines()[:10]:
                 stripped = line.strip()
@@ -137,6 +253,19 @@ def _as_scalar(value: object, path: Path, key: str) -> str:
         f"{path}: {key!r} is a {type(value).__name__}. "
         "Parameters become environment variables, so use a string, number or boolean."
     )
+
+
+_PROMPT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_prompt_key(key: str) -> str:
+    """A prompt key becomes RUNON_PROMPT_<KEY>, so it has to be a shell name."""
+    if not _PROMPT_KEY.match(key or ""):
+        raise ProgramInvalid(
+            f"{key!r} cannot be an environment variable name; "
+            "use letters, digits and underscores, starting with a letter"
+        )
+    return key
 
 
 def validate_name(name: str) -> str:

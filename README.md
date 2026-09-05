@@ -429,6 +429,117 @@ substring of the command, first match wins, and `default_exit` fails everything:
 fake = FakeTransport(responses={"migrate": Result("", "", 1, "", "lock held")})
 ```
 
+## Programs that describe themselves
+
+Two optional files beside `main.sh`. Neither changes what an existing program
+does — a program without them behaves exactly as it did before they existed.
+
+**`meta.toml`** — what it is:
+
+```toml
+title       = "Deploy the API"
+description = "Ships the current build and restarts the service"
+category    = "deploy"
+status      = "active"          # or experimental, deprecated
+destructive = true
+confirm_message = "Restarts production and drops in-flight requests."
+tags        = ["api", "prod"]
+```
+
+`description` is what `runon list programs` and the picker show. `destructive`
+is agreed to before anything runs:
+
+```
+$ runon local run-program deploy
+Deploy the API — Ships the current build and restarts the service
+
+DESTRUCTIVE: Restarts production and drops in-flight requests.
+Run deploy anyway? [y/N]:
+```
+
+With nobody watching it **refuses** rather than agreeing on your behalf. A
+scheduled run says it means it with `RUNON_ASSUME_YES=1`.
+
+**`prompts.toml`** — what it asks for:
+
+```toml
+[[prompt]]
+key     = "branch"
+title   = "Branch to deploy"
+default = "main"
+
+[[prompt]]
+key    = "token"
+title  = "Deploy token"
+secret = true            # read with getpass, never echoed
+```
+
+Answers reach the script as `RUNON_PROMPT_BRANCH`, `RUNON_PROMPT_TOKEN`. A list
+of tables rather than one table because an interview reads in an order and a
+TOML table has none.
+
+```
+$ runon local run-program deploy
+Branch to deploy [main]: hotfix
+Deploy token:
+```
+
+Asked **once** for a whole group, not once per host.
+
+### The same command, scheduled
+
+```bash
+RUNON_PROMPT_BRANCH=hotfix RUNON_PROMPT_TOKEN=… RUNON_ASSUME_YES=1 \
+  runon group --group production run-program deploy
+```
+
+Precedence is **environment → what you type → the declared default**. The
+environment wins even when someone is watching: a value passed on purpose
+should not be asked for again, and that is what makes one command work both by
+hand and from cron. With no terminal and no default, it stops and names the
+variable that would have supplied it:
+
+```
+runon: this program asks for 'Deploy token', which has no default,
+and there is no terminal to ask on.
+Set RUNON_PROMPT_TOKEN in the environment.
+```
+
+Full precedence for everything a program can see, most specific last:
+
+```
+RUNON_VAR_*      the host's vars
+RUNON_PARAM_*    the program's params.toml
+RUNON_PROMPT_*   answers given for this run
+```
+
+### Making one
+
+`runon new-program <name>` asks what it is, and writes the files:
+
+```
+$ runon new-program deploy
+Describe deploy. Enter skips anything.
+  Title: Deploy the API
+  One-line description: Ships the current build
+  Category (deploy, checks, maintenance…): deploy
+  Status [active/experimental/deprecated] (active):
+  Destructive — hard to undo? [y/N]: y
+  What should it warn before running? Restarts production.
+  Tags (comma-separated): api, prod
+
+  Does it ask for anything at run time? [y/N]: y
+  Each becomes RUNON_PROMPT_<KEY> for the script. Blank key to finish.
+    key: branch
+    question: Branch to deploy
+    default: main
+    secret — hide while typing? [y/N]: n
+    key:
+```
+
+Every answer is optional. With no terminal it writes `main.sh` alone, so
+`runon new-program x` still works in a script.
+
 ## Writing programs
 
 Conventions that keep this pleasant, learned the hard way:

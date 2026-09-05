@@ -140,6 +140,31 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "becomes a password in git"
 
+      # A program that asks for things, run by a scheduler that cannot answer.
+      - name: Prompts and confirmations work with nobody watching
+        env:
+          RUNON_HOME: /tmp/prompted
+        run: |
+          /tmp/clean/bin/runon list programs > /dev/null
+          d=/tmp/prompted/workspace/programs/asker
+          mkdir -p "$d"
+          printf '#!/bin/sh\necho "b=$RUNON_PROMPT_BRANCH"\n' > "$d/main.sh"
+          chmod +x "$d/main.sh"
+          printf 'destructive = true\n' > "$d/meta.toml"
+          printf '[[prompt]]\nkey = "branch"\ndefault = "main"\n' > "$d/prompts.toml"
+
+          # destructive: refuses rather than agreeing for you
+          ! /tmp/clean/bin/runon local run-program asker -v < /dev/null
+
+          # says it means it, and the default answers the prompt
+          out=$(RUNON_ASSUME_YES=1 /tmp/clean/bin/runon local run-program asker -v < /dev/null)
+          echo "$out" | grep -q "b=main"
+
+          # the environment beats the default
+          out=$(RUNON_ASSUME_YES=1 RUNON_PROMPT_BRANCH=hotfix \
+                /tmp/clean/bin/runon local run-program asker -v < /dev/null)
+          echo "$out" | grep -q "b=hotfix"
+
       - name: Moving the workspace is remembered
         run: |
           /tmp/clean/bin/runon init /tmp/ops

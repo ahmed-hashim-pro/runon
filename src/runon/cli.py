@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 from pathlib import Path
 
-from . import __version__, config, inventory, runner, watch
+from . import __version__, asking, config, inventory, runner, watch
 from . import program as program_mod
+from .asking import Cancelled
 from .errors import RunonError
 from .picker import ADD_NEW, choose, choose_name
 from .program import Workspace
@@ -306,10 +308,6 @@ def _create_host(workspace: Workspace, args) -> inventory.Host:
     return host
 
 
-class Cancelled(Exception):
-    """The person answering stopped answering. Not a failure."""
-
-
 def _read(label: str) -> str:
     """input(), with EOF treated as 'stopped', not as a traceback.
 
@@ -413,6 +411,51 @@ def _resolve_program(workspace: Workspace, name: str | None):
     return choose(programs)
 
 
+def _prepare(program, args) -> dict[str, str]:
+    """Announces what a program is, confirms it if it bites, and interviews it.
+
+    Ordered deliberately: you should know what you are about to run before you
+    are asked to agree to it, and you should not fill in an interview for a run
+    you then decline.
+    """
+    meta = program.meta()
+    if meta.title or meta.description:
+        detail = f" — {meta.description}" if meta.description else ""
+        # stderr, with the warnings below it: this is context about the run,
+        # and stdout is where the run's own result goes.
+        print(f"{meta.title or program.name}{detail}", file=sys.stderr)
+    if meta.status == "deprecated":
+        print("  this program is marked deprecated", file=sys.stderr)
+    elif meta.status == "experimental":
+        print("  this program is marked experimental", file=sys.stderr)
+
+    if meta.destructive and not args.dry_run:
+        _confirm_destructive(program, meta)
+
+    return asking.collect(program.prompts())
+
+
+def _confirm_destructive(program, meta) -> None:
+    """A program that says it is hard to undo has to be agreed to.
+
+    Refused rather than warned about when nobody is there: a scheduled run that
+    silently agrees on your behalf is the thing the flag exists to prevent.
+    """
+    message = meta.confirm_message or "This program makes changes that may be hard to undo."
+    print(f"\nDESTRUCTIVE: {message}", file=sys.stderr)
+
+    if os.environ.get("RUNON_ASSUME_YES") == "1":
+        print("proceeding: RUNON_ASSUME_YES=1", file=sys.stderr)
+        return
+    if not sys.stdin.isatty():
+        raise RunonError(
+            f"{program.name} is marked destructive and there is no terminal to confirm on.\n"
+            "Set RUNON_ASSUME_YES=1 if you mean it."
+        )
+    if _read(f"Run {program.name} anyway? [y/N]: ").lower() not in {"y", "yes"}:
+        raise Cancelled
+
+
 def _local(workspace: Workspace, args) -> int:
     host = inventory.Host(name="local", address="localhost")
     transport = LocalTransport()
@@ -440,8 +483,9 @@ def _local(workspace: Workspace, args) -> int:
     if args.dry_run:
         print(f"would run {program.name} on the local machine")
         return 0
+    answers = _prepare(program, args)
     result = runner.run_program(
-        transport, host, workspace, program, args=passthrough, remote=False
+        transport, host, workspace, program, args=passthrough, remote=False, prompts=answers
     )
     return emit([result], verbose=args.verbose)
 
@@ -498,19 +542,27 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
         _print_plan(hosts, f"{args.verb} {program.name}")
         return 0
 
+    # Once, not per host: a group of twenty is one intent, and being asked the
+    # same question twenty times would be its own argument against the feature.
+    answers = {} if args.verb == "copy-program" else _prepare(program, args)
+
     if getattr(args, "watch", False):
-        return _watch(transport, hosts, workspace, program, passthrough, args)
+        return _watch(transport, hosts, workspace, program, passthrough, answers, args)
 
     def work(host) -> Result | list[Result]:
         if args.verb == "copy-program":
             return runner.copy_program(transport, host, workspace, program)
         if args.verb == "run-program":
-            return runner.run_program(transport, host, workspace, program, args=passthrough)
+            return runner.run_program(
+                transport, host, workspace, program, args=passthrough, prompts=answers
+            )
         copied = runner.copy_program(transport, host, workspace, program)
         failed = [r for r in copied if not r.ok]
         if failed:
             return failed[0]
-        return runner.run_program(transport, host, workspace, program, args=passthrough)
+        return runner.run_program(
+            transport, host, workspace, program, args=passthrough, prompts=answers
+        )
 
     results = runner.fan_out(hosts, work, parallel=parallel)
     return emit(results, verbose=args.verbose)
@@ -552,7 +604,7 @@ def _password_for(args, hosts) -> str | None:
     return password
 
 
-def _watch(transport, hosts, workspace, program, passthrough, args) -> int:
+def _watch(transport, hosts, workspace, program, passthrough, answers, args) -> int:
     """Runs the program in tmux panes instead of collecting results.
 
     Copying still happens up front and sequentially, because a pane that starts
@@ -569,7 +621,7 @@ def _watch(transport, hosts, workspace, program, passthrough, args) -> int:
         if args.verb == "copy-program":
             return emit(copied)
 
-    remote_command = runner.watch_command(workspace, program, args=passthrough)
+    remote_command = runner.watch_command(workspace, program, args=passthrough, prompts=answers)
     commands = watch.build_commands(hosts, transport.ssh_argv(), remote_command)
     session = watch.open_panes(hosts, commands, label=program.name)
     print(f"tmux session: {session}  (reattach with: tmux attach -t {session})")
@@ -619,10 +671,71 @@ def _init(root: Path, *, force: bool) -> int:
     return 0
 
 
-def _new_program(workspace: Workspace, name: str) -> int:
-    from .scaffold import write_program
+def _new_program(workspace: Workspace, name: str, *, describe: bool = True) -> int:
+    from .scaffold import write_meta, write_program, write_prompts
 
     program_mod.validate_name(name)
     path = write_program(workspace.programs_path, name)
-    print(f"  created {path}")
+    created = [path]
+
+    if describe and sys.stdin.isatty():
+        meta, prompts = _interview_about(name)
+        if meta:
+            created.append(write_meta(path.parent, meta))
+        if prompts:
+            created.append(write_prompts(path.parent, prompts))
+
+    for made in created:
+        print(f"  created {made}")
     return 0
+
+
+def _interview_about(name: str) -> tuple[dict, list[dict]]:
+    """Asks what a program is, so the picker and the run banner can say.
+
+    Every answer is optional — Enter skips — because a description you were
+    forced to invent is worse than no description at all.
+    """
+    print(f"\nDescribe {name}. Enter skips anything.")
+    meta = {
+        "title": _read("  Title: "),
+        "description": _read("  One-line description: "),
+        "category": _read("  Category (deploy, checks, maintenance…): "),
+    }
+
+    status = _read("  Status [active/experimental/deprecated] (active): ") or "active"
+    if status not in program_mod.STATUSES:
+        print(f"  {status!r} is not a status; using 'active'", file=sys.stderr)
+        status = "active"
+    meta["status"] = status
+
+    if _read("  Destructive — hard to undo? [y/N]: ").lower() in {"y", "yes"}:
+        meta["destructive"] = True
+        meta["confirm_message"] = _read(
+            "  What should it warn before running? "
+        ) or "This program makes changes that may be hard to undo."
+
+    tags = _read("  Tags (comma-separated): ")
+    meta["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+
+    prompts = []
+    if _read("\n  Does it ask for anything at run time? [y/N]: ").lower() in {"y", "yes"}:
+        print("  Each becomes RUNON_PROMPT_<KEY> for the script. Blank key to finish.")
+        while True:
+            key = _read("    key: ")
+            if not key:
+                break
+            try:
+                program_mod.validate_prompt_key(key)
+            except RunonError as exc:
+                print(f"    {exc}", file=sys.stderr)
+                continue
+            prompts.append({
+                "key": key,
+                "title": _read("    question: "),
+                "default": _read("    default: "),
+                "secret": _read("    secret — hide while typing? [y/N]: ").lower()
+                in {"y", "yes"},
+            })
+
+    return ({k: v for k, v in meta.items() if v}, prompts)
