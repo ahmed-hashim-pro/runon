@@ -522,3 +522,46 @@ class TestFirstRunInstallsCompletion:
 
         assert list(site.iterdir()) == []
         assert (self._home(tmp_path) / ".zsh/completions/_runon").is_file()
+
+
+class TestShippedCompletions:
+    """The wheel ships completion files, and a file can go stale.
+
+    They exist so a system-wide or `--user` install needs no command at all —
+    those land under a prefix the shells already read. A copy that drifts from
+    the generator would be worse than not shipping one, because it would look
+    installed and complete the wrong things.
+    """
+
+    FILES = {
+        "bash": "share/bash-completion/completions/runon",
+        "zsh": "share/zsh/site-functions/_runon",
+        "fish": "share/fish/vendor_completions.d/runon.fish",
+    }
+
+    def _root(self):
+        return Path(__file__).resolve().parents[1]
+
+    @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+    def test_the_shipped_file_matches_what_runon_generates(self, shell):
+        path = self._root() / self.FILES[shell]
+
+        assert path.is_file(), f"{path} is missing"
+        assert path.read_text(encoding="utf-8") == script(shell), (
+            f"{self.FILES[shell]} is stale. Regenerate with:\n"
+            "  python -c \"from runon.completion import script; from pathlib import Path; "
+            "[Path(p).write_text(script(s)) for s, p in "
+            "{'bash':'share/bash-completion/completions/runon',"
+            "'zsh':'share/zsh/site-functions/_runon',"
+            "'fish':'share/fish/vendor_completions.d/runon.fish'}.items()]\""
+        )
+
+    def test_the_wheel_declares_all_three(self):
+        import tomllib
+
+        declared = tomllib.loads(
+            (self._root() / "pyproject.toml").read_text(encoding="utf-8")
+        )["tool"]["setuptools"]["data-files"]
+
+        shipped = {file for files in declared.values() for file in files}
+        assert shipped == set(self.FILES.values())

@@ -638,10 +638,19 @@ $ runon group --group prod copy-run-program de<TAB>
 deploy
 ```
 
-**You do not have to do anything.** `pip install` cannot register a completion
-— a wheel has no way to run anything afterwards, and the data files that would
-place one land inside the venv for a venv or pipx install, where no shell reads
-them. So `runon` does it on its first run instead:
+**You do not have to do anything.** How it gets there depends on how you
+installed, because a wheel has no way to run anything after `pip install`:
+
+| install | completion arrives |
+|---|---|
+| `sudo pip install runon` | with the package — bash, zsh and fish |
+| `pip install --user runon` | with the package — bash and fish |
+| venv, pipx, `--user` + zsh | on the first `runon` command |
+
+The package ships completion files, which land under a prefix the shells
+already read for a system-wide or `--user` install. A venv or pipx install puts
+them inside the venv, where nothing reads them, so `runon` sets it up itself the
+first time you run anything:
 
 ```
 $ runon list programs
@@ -651,7 +660,8 @@ runon: bash completion installed at ~/.local/share/bash-completion/completions/r
 ```
 
 Once, into your own home directory, never into a shared system directory.
-`RUNON_NO_COMPLETION=1` turns it off. To place it yourself, or somewhere
+`RUNON_NO_COMPLETION=1` turns it off. Either way it is active in the next shell
+you open. To place it yourself, or somewhere
 everyone on the machine gets it:
 
 ```bash

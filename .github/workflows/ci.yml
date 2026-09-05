@@ -102,6 +102,17 @@ jobs:
       # path: script -> command -> workspace -> names back into the shell.
       # `pip install` cannot register a completion, so the one command that
       # does has to work -- and the result has to be what bash then loads.
+      # A --user install needs no command at all: these land under a prefix
+      # bash and fish already read.
+      - name: The wheel carries completions to where a --user install reads them
+        env:
+          PYTHONUSERBASE: /tmp/userbase
+        run: |
+          python -m pip install -q --user --no-warn-script-location dist/*.whl
+          test -f /tmp/userbase/share/bash-completion/completions/runon
+          test -f /tmp/userbase/share/fish/vendor_completions.d/runon.fish
+          test -f /tmp/userbase/share/zsh/site-functions/_runon
+
       - name: Completion installs itself where bash looks
         env:
           SHELL: /bin/bash

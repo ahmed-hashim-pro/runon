@@ -1,0 +1,23 @@
+# runon bash completion.  Install with:
+#   runon completion bash > /usr/local/etc/bash_completion.d/runon
+_runon() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    case "$prev" in
+        runon)      COMPREPLY=($(compgen -W "local host group list init new-program doctor completion config add-host" -- "$cur")); return;;
+        host|group) COMPREPLY=($(compgen -W "copy copy-program run-program copy-run-program" -- "$cur")); return;;
+        local)      COMPREPLY=($(compgen -W "run-program run-layout" -- "$cur")); return;;
+        list)       COMPREPLY=($(compgen -W "programs hosts groups layouts" -- "$cur")); return;;
+        completion) COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur")); return;;
+        run-program|copy-program|copy-run-program|--program|-p)
+                    COMPREPLY=($(compgen -W "$(runon list programs 2>/dev/null | awk '{print $1}')" -- "$cur")); return;;
+        run-layout|--layout|-l)
+                    COMPREPLY=($(compgen -W "$(runon list layouts 2>/dev/null | awk '{print $1}')" -- "$cur")); return;;
+        --group|-g)   COMPREPLY=($(compgen -W "$(runon list groups 2>/dev/null | awk '{print $1}')" -- "$cur")); return;;
+        --host|-H)    COMPREPLY=($(compgen -W "$(runon list hosts 2>/dev/null | awk '{print $1}')" -- "$cur")); return;;
+    esac
+    COMPREPLY=($(compgen -W "--program --host --group --parallel --watch --ask-password --persist --yes --dry-run --verbose --help" -- "$cur"))
+}
+complete -F _runon runon

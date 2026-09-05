@@ -1,0 +1,32 @@
+#compdef runon
+# runon zsh completion.  Install with:
+#   runon completion zsh > "${fpath[1]}/_runon"   # then: compinit
+_runon() {
+    local -a scopes verbs
+    scopes=(local host group list init new-program doctor completion config add-host)
+    verbs=(copy copy-program run-program copy-run-program)
+
+    case "${words[2]}" in
+        host|group)
+            if (( CURRENT == 3 )); then compadd -- $verbs; return; fi ;;
+        local)
+            if (( CURRENT == 3 )); then compadd -- run-program run-layout; return; fi ;;
+        list)
+            if (( CURRENT == 3 )); then compadd -- programs hosts groups layouts; return; fi ;;
+        completion)
+            if (( CURRENT == 3 )); then compadd -- bash zsh fish; return; fi ;;
+    esac
+
+    if (( CURRENT == 2 )); then compadd -- $scopes; return; fi
+
+    case "${words[CURRENT-1]}" in
+        run-program|copy-program|copy-run-program|--program|-p)
+            compadd -- ${(f)"$(runon list programs 2>/dev/null | awk '{print $1}')"}; return;;
+        run-layout|--layout|-l)
+            compadd -- ${(f)"$(runon list layouts 2>/dev/null | awk '{print $1}')"}; return;;
+        --group|-g)   compadd -- ${(f)"$(runon list groups 2>/dev/null | awk '{print $1}')"}; return;;
+        --host|-H)    compadd -- ${(f)"$(runon list hosts 2>/dev/null | awk '{print $1}')"}; return;;
+    esac
+    compadd -- --program --host --group --parallel --watch --ask-password --persist --yes --dry-run --verbose --help
+}
+_runon "$@"
