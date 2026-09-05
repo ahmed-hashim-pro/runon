@@ -358,8 +358,28 @@ jobs:
           ss -ltnp | grep -q ':2222' || { echo "sshd did not start"; sudo /usr/sbin/sshd -f /tmp/sshd_test.conf -d -T; exit 1; }
           echo "listening on 2222"
 
+      # An unknown host key asks the askpass helper "are you sure?", and a
+      # helper that answers everything answers that with the password. ssh
+      # rejects it and asks again, forever: CI hung for the full 3600s and
+      # reported nothing. Fail fast instead, before the key is known.
+      - name: An unknown host key fails instead of hanging
+        timeout-minutes: 2
+        run: |
+          printf '%s' 'not-a-real-password' | \
+            runon add-host unknown --address 127.0.0.1 --port 2222 --user runontest \
+              --password-stdin
+          set +e
+          timeout 60 runon host --host unknown run-program hello-world --verbose \
+            < /dev/null | tee /tmp/unknown.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit=$code"
+          test "$code" -ne 124   # 124 is timeout(1): it hung
+          grep -qi "host key verification failed" /tmp/unknown.log
+
       - name: A stored password authenticates against it
         run: |
+          ssh-keyscan -p 2222 127.0.0.1 >> ~/.ssh/known_hosts 2>/dev/null
           printf '%s' 'not-a-real-password' | \
             runon add-host pw --address 127.0.0.1 --port 2222 --user runontest --password-stdin
           # never inside $( ) under `set -e`: a failure would abort the step

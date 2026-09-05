@@ -20,8 +20,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HELPER = """#!/bin/sh
-# Written by runon. Prints the password ssh asked for, then nothing else.
-cat {path}
+# Written by runon. Answers a password prompt, and nothing else.
+#
+# ssh passes the prompt text as $1, and it asks this helper about more than
+# passwords. An unknown host key asks "Are you sure you want to continue
+# connecting (yes/no)?" — answered with a password, ssh rejects it and asks
+# again, forever. That is not a failed login; it is a run that hangs until
+# something else times it out.
+case "$1" in
+    *assword*|*assphrase*) cat {path} ;;
+    *) exit 1 ;;
+esac
 """
 
 
