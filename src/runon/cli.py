@@ -89,8 +89,15 @@ def build_parser() -> argparse.ArgumentParser:
     conf = sub.add_parser("config", help="show or change where your programs live")
     conf.add_argument("--workspace", type=Path, help="point runon at an existing workspace")
 
-    completion = sub.add_parser("completion", help="print a shell completion script")
-    completion.add_argument("shell", choices=["bash", "zsh", "fish"])
+    completion = sub.add_parser("completion", help="set up or print shell completion")
+    completion.add_argument(
+        "shell", nargs="?", choices=["bash", "zsh", "fish"], help="default: your $SHELL"
+    )
+    completion.add_argument(
+        "--install",
+        action="store_true",
+        help="write it where your shell looks, instead of printing it",
+    )
 
     return parser
 
@@ -209,10 +216,7 @@ def _dispatch(args: argparse.Namespace) -> int:
 
         return report(run_checks(), stream=sys.stdout)
     if args.scope == "completion":
-        from .completion import script
-
-        print(script(args.shell))
-        return 0
+        return _completion(args)
 
     workspace = _workspace_for(args)
     # From the workspace, never from the cwd: taking programs from one place and
@@ -371,6 +375,27 @@ def _ask_how_it_authenticates() -> tuple[str | None, str | None]:
             if file:
                 return None, file
         print("  not a choice")
+
+
+def _completion(args) -> int:
+    from . import completion
+
+    shell = args.shell or completion.default_shell()
+    if shell is None:
+        raise RunonError(
+            "could not tell which shell you use from $SHELL.\n"
+            "Name it: runon completion bash|zsh|fish"
+        )
+
+    if not args.install:
+        print(completion.script(shell))
+        return 0
+
+    path, remaining = completion.install(shell)
+    print(f"  wrote {path}")
+    if remaining:
+        print(f"\n{remaining}")
+    return 0
 
 
 def _config(new_root: Path | None) -> int:

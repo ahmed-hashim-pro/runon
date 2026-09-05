@@ -100,6 +100,24 @@ jobs:
 
       # The completion scripts shell out to runon, so this checks the whole
       # path: script -> command -> workspace -> names back into the shell.
+      # `pip install` cannot register a completion, so the one command that
+      # does has to work -- and the result has to be what bash then loads.
+      - name: Completion installs itself where bash looks
+        env:
+          SHELL: /bin/bash
+        run: |
+          /tmp/clean/bin/runon completion --install
+          test -f "$HOME/.local/share/bash-completion/completions/runon"
+          cat > /tmp/loaded.sh <<'EOF'
+          source "$HOME/.local/share/bash-completion/completions/runon"
+          COMP_WORDS=(runon "")
+          COMP_CWORD=1
+          COMPREPLY=()
+          _runon
+          printf '%s\n' "${COMPREPLY[@]}"
+          EOF
+          bash /tmp/loaded.sh | grep -qx doctor
+
       - name: Completion actually completes
         run: |
           export PATH="/tmp/clean/bin:$PATH"
