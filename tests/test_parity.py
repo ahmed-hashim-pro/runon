@@ -13,7 +13,7 @@ from conftest import tty
 from runon import cli, completion, config, runner, watch
 from runon.completion import script
 from runon.doctor import Check, report, run_checks
-from runon.errors import ProgramInvalid
+from runon.errors import ProgramInvalid, RunonError
 from runon.inventory import Host
 from runon.picker import choose_name
 from runon.transport import FakeTransport, SSHTransport
@@ -170,11 +170,14 @@ class TestNamePicker:
         )
         assert chosen == "b"
 
-    def test_a_single_option_needs_no_prompt(self):
-        chosen = choose_name(
-            "group", ["only"], stream=io.StringIO(), prompt_stream=io.StringIO()
-        )
+    def test_a_single_option_needs_no_prompt_on_a_terminal(self):
+        chosen = choose_name("group", ["only"], stream=tty(), prompt_stream=io.StringIO())
         assert chosen == "only"
+
+    def test_but_a_script_still_has_to_say_which(self):
+        # one group today, two tomorrow, and the same cron line either way
+        with pytest.raises(RunonError):
+            choose_name("group", ["only"], stream=io.StringIO(), prompt_stream=io.StringIO())
 
     def test_host_and_group_are_optional_now(self):
         parser = cli.build_parser()

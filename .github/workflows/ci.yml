@@ -243,6 +243,29 @@ jobs:
           cd /
           /tmp/clean/bin/runon config | grep -q '/tmp/ops'
 
+  # Three versions in a row were bumped, committed and never tagged, so four
+  # fixes sat on main while a user tested the release that still had the bugs.
+  # A green build said nothing, because nothing was checking.
+  released:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags, which a shallow checkout does not bring
+
+      - name: The version on main has been tagged
+        run: |
+          version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "pyproject says $version"
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "v$version is tagged"
+          else
+            echo "::error::pyproject.toml says $version and there is no v$version tag."
+            echo "::error::Nothing has published this. Run: git tag v$version && git push origin v$version"
+            exit 1
+          fi
+
   # Everything above drives the fake transport, which records what would have
   # been copied and cannot tell you that scp would refuse it. A real host
   # reported `scp: ~/.runon/programs/hello-world: No such file or directory`

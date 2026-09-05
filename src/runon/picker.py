@@ -42,9 +42,12 @@ def choose(
 
     if not programs:
         return None
+    # Before the single-option shortcut, not after: a scripted run should mean
+    # the same thing tomorrow, and today's only program is tomorrow's first of
+    # three. Auto-selecting is a convenience for a person looking at a menu.
+    _require_a_terminal(stream, "--program", [p.name for p in programs])
     if len(programs) == 1:
         return programs[0]
-    _require_a_terminal(stream, "--program", [p.name for p in programs])
 
     if rich is None:
         rich = screen.available(stream) and os.environ.get("RUNON_PLAIN") != "1"
@@ -146,9 +149,9 @@ def choose_name(
 
     if not names and not offer_new:
         return None
+    _require_a_terminal(stream, f"--{kind}", names)
     if len(names) == 1 and not offer_new:
         return names[0]
-    _require_a_terminal(stream, f"--{kind}", names)
 
     entries = [*names] + ([f"add a new {kind}…"] if offer_new else [])
     print(f"Which {kind}?", file=out)
