@@ -6,7 +6,7 @@ import pytest
 from conftest import tty
 from test_cli import run
 
-from runon import asking
+from runon import asking, cli
 from runon.errors import ProgramInvalid, RunonError
 from runon.program import Program, Prompt
 
@@ -243,6 +243,71 @@ class TestDestructivePrograms:
         _, _, err = run(["local", "run-program", "wiper", "-v"], root, capsys)
 
         assert "Drops the database." in err
+
+    def test_yes_agrees_in_advance(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys, "destructive = true\n")
+
+        code, out, err = run(["local", "run-program", "wiper", "-v", "--yes"], root, capsys)
+
+        assert code == 0
+        assert "ran" in out
+        assert "proceeding: --yes" in err
+
+    def test_the_short_form_is_the_same_flag(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys, "destructive = true\n")
+
+        code, out, _ = run(["local", "run-program", "wiper", "-v", "-y"], root, capsys)
+
+        assert code == 0
+        assert "ran" in out
+
+    def test_the_warning_is_printed_even_when_skipped(self, tmp_path, capsys):
+        """A log that does not say what it agreed to cannot tell you why."""
+        root = self._workspace(
+            tmp_path, capsys, 'destructive = true\nconfirm_message = "Drops the database."\n'
+        )
+
+        _, _, err = run(["local", "run-program", "wiper", "-v", "--yes"], root, capsys)
+
+        assert "Drops the database." in err
+
+    def test_yes_works_on_a_remote_verb_too(self, monkeypatch, tmp_path, inventory_file, capsys):
+        from runon.transport import FakeTransport
+
+        transport = FakeTransport()
+        root = inventory_file.parent
+        self._workspace(root, capsys, "destructive = true\n")
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+
+        code, _, _ = run(
+            ["host", "--host", "web-1", "run-program", "wiper", "--yes"], root, capsys
+        )
+
+        assert code == 0
+        assert [h for h, _ in transport.calls] == ["web-1"]
+
+    def test_without_it_a_remote_run_still_refuses(
+        self, monkeypatch, tmp_path, inventory_file, capsys
+    ):
+        from runon.transport import FakeTransport
+
+        transport = FakeTransport()
+        root = inventory_file.parent
+        self._workspace(root, capsys, "destructive = true\n")
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+
+        code, _, err = run(["host", "--host", "web-1", "run-program", "wiper"], root, capsys)
+
+        assert code == 2
+        assert transport.calls == []
+        assert "--yes" in err
+
+    def test_the_refusal_names_both_ways_to_say_yes(self, tmp_path, capsys):
+        root = self._workspace(tmp_path, capsys, "destructive = true\n")
+
+        _, _, err = run(["local", "run-program", "wiper", "-v"], root, capsys)
+
+        assert "--yes" in err and "RUNON_ASSUME_YES" in err
 
     def test_a_dry_run_never_asks(self, tmp_path, capsys):
         root = self._workspace(tmp_path, capsys, "destructive = true\n")

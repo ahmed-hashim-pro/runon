@@ -33,7 +33,7 @@ _runon() {{
         --group|-g)   COMPREPLY=($(compgen -W "$(runon list groups 2>/dev/null | awk '{{print $1}}')" -- "$cur")); return;;
         --host|-H)    COMPREPLY=($(compgen -W "$(runon list hosts 2>/dev/null | awk '{{print $1}}')" -- "$cur")); return;;
     esac
-    COMPREPLY=($(compgen -W "--program --host --group --parallel --watch --ask-password --persist --dry-run --verbose --help" -- "$cur"))
+    COMPREPLY=($(compgen -W "--program --host --group --parallel --watch --ask-password --persist --yes --dry-run --verbose --help" -- "$cur"))
 }}
 complete -F _runon runon
 """
@@ -67,7 +67,7 @@ _runon() {{
         --group|-g)   compadd -- ${{(f)"$(runon list groups 2>/dev/null | awk '{{print $1}}')"}}; return;;
         --host|-H)    compadd -- ${{(f)"$(runon list hosts 2>/dev/null | awk '{{print $1}}')"}}; return;;
     esac
-    compadd -- --program --host --group --parallel --watch --ask-password --persist --dry-run --verbose --help
+    compadd -- --program --host --group --parallel --watch --ask-password --persist --yes --dry-run --verbose --help
 }}
 _runon "$@"
 """
