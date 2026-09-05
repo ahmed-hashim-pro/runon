@@ -659,6 +659,15 @@ runon: bash completion installed at ~/.local/share/bash-completion/completions/r
   hello-world  Prints a greeting from each host.
 ```
 
+If tab does nothing, `runon doctor` says which link in the chain is missing —
+the file, the shell's loader, `$fpath`, or `runon` itself not being on `PATH`:
+
+```
+  ok       bash completion  ~/.local/share/bash-completion/completions/runon
+  --       bash-completion  not found — bash will not load the file.
+                            Install it: sudo apt install bash-completion
+```
+
 Once, into your own home directory, never into a shared system directory.
 `RUNON_NO_COMPLETION=1` turns it off. Either way it is active in the next shell
 you open. To place it yourself, or somewhere
