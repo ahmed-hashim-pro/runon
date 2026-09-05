@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .errors import ProgramInvalid
@@ -72,6 +73,46 @@ def write_program(programs_dir: Path, name: str, description: str | None = None)
     )
     entry.chmod(0o755)
     return entry
+
+
+def write_meta(directory: Path, meta: dict) -> Path:
+    """Writes meta.toml, omitting everything left blank.
+
+    A file full of empty keys reads as a form nobody filled in; one that
+    contains only what was said reads as a description.
+    """
+    lines = []
+    for key in ("title", "description", "details", "category", "status", "confirm_message"):
+        value = meta.get(key)
+        if value:
+            lines.append(f"{key} = {json.dumps(str(value))}")
+    if meta.get("destructive"):
+        lines.append("destructive = true")
+    for key in ("tags", "related"):
+        values = meta.get(key) or []
+        if values:
+            lines.append(f"{key} = [{', '.join(json.dumps(str(v)) for v in values)}]")
+
+    path = directory / "meta.toml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def write_prompts(directory: Path, prompts: list[dict]) -> Path:
+    lines = []
+    for prompt in prompts:
+        lines.append("[[prompt]]")
+        lines.append(f"key = {json.dumps(prompt['key'])}")
+        if prompt.get("title"):
+            lines.append(f"title = {json.dumps(prompt['title'])}")
+        if prompt.get("default"):
+            lines.append(f"default = {json.dumps(prompt['default'])}")
+        if prompt.get("secret"):
+            lines.append("secret = true")
+        lines.append("")
+    path = directory / "prompts.toml"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def write_workspace(root: Path, *, force: bool = False) -> list[Path]:

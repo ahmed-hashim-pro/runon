@@ -92,6 +92,7 @@ def run_program(
     *,
     args: list[str] | None = None,
     remote: bool = True,
+    prompts: dict[str, str] | None = None,
 ) -> Result:
     if remote:
         directory = remote_program_dir(program.name)
@@ -107,10 +108,18 @@ def run_program(
     command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; ./{ENTRY_POINT}"
     if argv:
         command += f" {argv}"
-    return transport.run(host, command, env=program_env(host, program, functions_dir))
+    # Prompt answers go in last: they were given for this run, which beats
+    # anything the host or the program declared earlier.
+    return transport.run(host, command, env=program_env(host, program, functions_dir, prompts))
 
 
-def watch_command(workspace: Workspace, program: Program, *, args: list[str] | None = None) -> str:
+def watch_command(
+    workspace: Workspace,
+    program: Program,
+    *,
+    args: list[str] | None = None,
+    prompts: dict[str, str] | None = None,
+) -> str:
     """The remote command a tmux pane runs.
 
     Unlike the collected path this keeps the shell open afterwards, so a pane
@@ -120,7 +129,9 @@ def watch_command(workspace: Workspace, program: Program, *, args: list[str] | N
     argv = " ".join(shlex.quote(a) for a in (args or []))
     exports = " ".join(
         f"{k}={shlex.quote(v)}"
-        for k, v in sorted(program_env(Host("", ""), program, f"{REMOTE_ROOT}/functions").items())
+        for k, v in sorted(
+            program_env(Host("", ""), program, f"{REMOTE_ROOT}/functions", prompts).items()
+        )
         if not k.startswith(("RUNON_HOST", "RUNON_ADDRESS"))
     )
     command = f"cd {directory} && chmod +x {ENTRY_POINT} 2>/dev/null; {exports} ./{ENTRY_POINT}"
