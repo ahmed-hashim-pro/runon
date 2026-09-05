@@ -8,7 +8,7 @@ from runon.transport import (
     Result,
     SSHTransport,
     _looks_like_missing_sftp,
-    env_prefix,
+    remote_command,
 )
 
 HOST = Host(name="h", address="example.com", user="deploy")
@@ -33,29 +33,49 @@ class TestSSHArgv:
         assert "-p" not in SSHTransport()._base(HOST, "ssh")
 
 
-class TestEnvPrefix:
+class TestRemoteCommand:
+    """The one string ssh hands to the target's login shell.
+
+    It used to be `export A=1; cd dir && ./main.sh`, which quietly assumes a
+    Bourne-family shell. Against a tcsh account that is two failures at once —
+    `export` is not a command there, and `2>` is not how csh redirects — so
+    every RUNON_* variable arrived empty, the functions library was not found,
+    and the program still exited 0. runon reported `ok` for a run that had none
+    of its inputs. FreeBSD gives root a tcsh by default.
+    """
+
+    def test_the_command_is_handed_to_bin_sh(self):
+        # not to whatever login shell the remote account happens to have
+        assert remote_command("cd p && ./main.sh").startswith("env /bin/sh -c ")
+
     def test_values_are_quoted(self):
-        assert env_prefix({"A": "b c"}) == "export A='b c'; "
+        assert "A='b c'" in remote_command("true", {"A": "b c"})
 
     def test_a_value_cannot_smuggle_a_command(self):
-        assert env_prefix({"A": "x; rm -rf /"}) == "export A='x; rm -rf /'; "
+        assert "A='x; rm -rf /'" in remote_command("true", {"A": "x; rm -rf /"})
 
-    def test_empty_env_adds_nothing(self):
-        assert env_prefix(None) == ""
-        assert env_prefix({}) == ""
+    def test_the_command_itself_is_quoted_as_one_argument(self):
+        built = remote_command("cd p && ./main.sh 2>/dev/null", {"A": "1"})
+
+        assert built.endswith("/bin/sh -c 'cd p && ./main.sh 2>/dev/null'")
+
+    def test_empty_env_still_wraps(self):
+        # csh cannot parse `2>/dev/null` either, so the wrapping is not only
+        # about the variables
+        for built in (remote_command("true"), remote_command("true", {})):
+            assert built == "env /bin/sh -c true"
 
     def test_ordering_is_stable(self):
         # so a failing command is reproducible from the log
-        assert env_prefix({"B": "2", "A": "1"}) == "export A=1 B=2; "
+        assert remote_command("true", {"B": "2", "A": "1"}).startswith("env A=1 B=2 ")
 
-    def test_it_exports_rather_than_prefixing_one_command(self):
-        """`A=1 cd dir && ./main.sh` sets A for the cd, and nothing else.
+    def test_a_raw_value_is_left_for_the_shell_to_expand(self):
+        from runon.transport import Raw
 
-        The command runon sends starts with cd, so a bare assignment prefix
-        meant no variable ever reached a remote program — not the parameters,
-        not the prompts, not RUNON_HOST.
-        """
-        assert env_prefix({"A": "1"}).startswith("export ")
+        built = remote_command("true", {"F": Raw('"$HOME/.runon"/functions')})
+
+        # quoted, it would reach the program as a literal dollar sign
+        assert 'F="$HOME/.runon"/functions' in built
 
     def test_the_variables_actually_reach_a_program_past_a_cd(self, tmp_path):
         """Run it, rather than asserting on the string that was wrong before."""
@@ -66,9 +86,33 @@ class TestEnvPrefix:
         entry.write_text('#!/bin/sh\necho "saw=${A:-unset}"\n', encoding="utf-8")
         entry.chmod(0o755)
 
-        command = env_prefix({"A": "1"}) + "cd p && ./main.sh"
         out = subprocess.run(
-            ["/bin/sh", "-c", command], cwd=tmp_path, capture_output=True, text=True
+            ["/bin/sh", "-c", remote_command("cd p && ./main.sh", {"A": "1"})],
+            cwd=tmp_path, capture_output=True, text=True,
+        )
+
+        assert out.stdout.strip() == "saw=1"
+
+    def test_it_survives_a_shell_that_is_not_bourne(self, tmp_path):
+        """The whole point: csh must not be able to lose the environment."""
+        import shutil
+        import subprocess
+
+        csh = shutil.which("tcsh") or shutil.which("csh")
+        if not csh:
+            import pytest
+
+            pytest.skip("no csh on this machine")
+
+        (tmp_path / "p").mkdir()
+        entry = tmp_path / "p" / "main.sh"
+        entry.write_text('#!/bin/sh\necho "saw=${A:-unset}"\n', encoding="utf-8")
+        entry.chmod(0o755)
+
+        out = subprocess.run(
+            [csh, "-c", remote_command("cd p && chmod +x main.sh 2>/dev/null; ./main.sh",
+                                       {"A": "1"})],
+            cwd=tmp_path, capture_output=True, text=True,
         )
 
         assert out.stdout.strip() == "saw=1"
@@ -172,10 +216,10 @@ class TestRawValues:
     def _run(self, env, script, home):
         import subprocess
 
-        from runon.transport import env_prefix
+        from runon.transport import remote_command
 
         return subprocess.run(
-            ["/bin/sh", "-c", env_prefix(env) + script],
+            ["/bin/sh", "-c", remote_command(script, env)],
             capture_output=True,
             text=True,
             env={"HOME": str(home), "PATH": "/usr/bin:/bin"},

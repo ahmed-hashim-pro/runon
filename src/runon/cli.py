@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import re
 import sys
 from contextlib import suppress
 from pathlib import Path
@@ -21,7 +22,13 @@ from .errors import RunonError
 from .picker import ADD_NEW, choose, choose_name
 from .program import Workspace
 from .report import emit
-from .transport import DEFAULT_PERSIST, LocalTransport, Result, SSHTransport
+from .transport import (
+    DEFAULT_PERSIST,
+    DEFAULT_TIMEOUT,
+    LocalTransport,
+    Result,
+    SSHTransport,
+)
 
 REMOTE_VERBS = ("copy", "copy-program", "run-program", "copy-run-program")
 
@@ -154,8 +161,28 @@ def _add_program_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="agree in advance to a destructive program's confirmation",
     )
+    _add_timeout_arg(parser)
     parser.add_argument(
-        "args", nargs="*", help="program name, then arguments passed through to main.sh"
+        "args",
+        nargs="*",
+        help=(
+            "program name, then arguments passed through to main.sh. "
+            "Put -- before any argument that starts with a dash, or runon "
+            "reads it as one of its own"
+        ),
+    )
+
+
+def _add_timeout_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            f"give up on a host after this long (default {DEFAULT_TIMEOUT}, "
+            "i.e. one hour; 0 waits forever)"
+        ),
     )
 
 
@@ -183,6 +210,7 @@ def _add_remote_verbs(parser: argparse.ArgumentParser) -> None:
             sub.add_argument("--remote-dir", required=True)
             sub.add_argument("--verbose", "-v", action="store_true")
             sub.add_argument("--dry-run", action="store_true")
+            _add_timeout_arg(sub)
         else:
             _add_program_args(sub)
 
@@ -563,9 +591,10 @@ def _resolve_program(workspace: Workspace, name: str | None):
     # from an empty list.
     if not programs:
         raise RunonError(_empty_workspace_hint(workspace))
-    if name:
-        return workspace.program(program_mod.validate_name(name))
-    return choose(programs)
+    chosen = workspace.program(program_mod.validate_name(name)) if name else choose(programs)
+    if chosen is not None:
+        program_mod.check_runnable(chosen)
+    return chosen
 
 
 def _prepare(program, args) -> dict[str, str]:
@@ -623,7 +652,7 @@ def _confirm_destructive(program, meta, args) -> None:
 
 def _local(workspace: Workspace, args) -> int:
     host = inventory.Host(name="local", address="localhost")
-    transport = LocalTransport()
+    transport = LocalTransport(timeout=_timeout_for(args))
 
     if args.verb == "run-layout":
         layouts = workspace.layouts()
@@ -634,7 +663,7 @@ def _local(workspace: Workspace, args) -> int:
             if chosen is None:
                 raise RunonError(f"no layout named {args.layout!r}")
         else:
-            chosen = choose(layouts)
+            chosen = choose(layouts, flag="--layout", title="Which layout?")
         if chosen is None:
             return CANCELLED
         script = workspace.layouts_path / f"{chosen.name}.sh"
@@ -688,6 +717,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     transport = SSHTransport(
         password=_password_for(args, hosts),
         persist=_persist_for(args),
+        timeout=_timeout_for(args),
     )
 
     if args.verb == "copy":
@@ -738,12 +768,44 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     return emit(results, verbose=args.verbose)
 
 
+#: OpenSSH's time format: a bare number of seconds, or one or more
+#: count-and-unit pairs, so "600", "10m" and "1h30m" are all durations.
+#:
+#: Checked here because ssh rejects a bad one per host, only after the
+#: connection has been attempted, as "Bad ControlPersist argument" with exit
+#: 255 — which reads as the host having refused you.
+_DURATION = re.compile(r"^\d+[smhdwSMHDW]?(\d+[smhdwSMHDW])*$")
+
+
+def _timeout_for(args) -> int | None:
+    """Seconds to allow a host, or None for no limit.
+
+    There was no way to say this at all: every command was cut off at an hour
+    with `timed out after 3600s`, which a package upgrade or a database
+    migration can genuinely exceed. 0 means wait — subprocess reads None as
+    "no deadline".
+    """
+    seconds = getattr(args, "timeout", DEFAULT_TIMEOUT)
+    if seconds is None:
+        return DEFAULT_TIMEOUT
+    if seconds < 0:
+        raise RunonError("--timeout cannot be negative; use 0 to wait forever")
+    return seconds or None
+
+
 def _persist_for(args) -> str | None:
     """How long to keep a connection open, or None to open a new one each time."""
     value = getattr(args, "persist", DEFAULT_PERSIST)
     if value is None or str(value).lower() in {"no", "none", "off", "0"}:
         return None
-    return str(value)
+    value = str(value)
+    if value.lower() != "yes" and not _DURATION.match(value):
+        raise RunonError(
+            f"--persist {value!r} is not a duration.\n"
+            "Use seconds, or counts with units: 30, 60s, 10m, 1h30m. "
+            "'no' turns connection reuse off."
+        )
+    return value
 
 
 def _password_for(args, hosts) -> str | None:
@@ -791,14 +853,65 @@ def _watch(transport, hosts, workspace, program, passthrough, answers, args) -> 
         if args.verb == "copy-program":
             return emit(copied)
 
+    wanted = len(hosts)
+    hosts = _reachable_for_watch(transport, hosts)
+    if not hosts:
+        return 1
+
     remote_commands = [
         runner.watch_command(workspace, program, host, args=passthrough, prompts=answers)
         for host in hosts
     ]
-    commands = watch.build_commands(hosts, transport.ssh_argv(), remote_commands)
+    # Per host, not one argv shared by all of them: which flags ssh needs
+    # depends on how that machine authenticates, and a blank host answers that
+    # question wrong for every machine with a stored credential.
+    commands = [
+        watch.build_commands([host], transport.ssh_argv(host), [command])[0]
+        for host, command in zip(hosts, remote_commands, strict=True)
+    ]
     session = watch.open_panes(hosts, commands, label=program.name)
     print(f"tmux session: {session}  (reattach with: tmux attach -t {session})")
-    return 0
+    # Non-zero if any host was dropped. The panes themselves outlive this
+    # process, so their outcome cannot be reported — but "one of the three
+    # never logged in" can be, and must be.
+    return 0 if len(hosts) == wanted else 1
+
+
+def _reachable_for_watch(transport, hosts):
+    """Logs in to each host once, and drops the ones that would not open.
+
+    Two jobs, and both of them are the same login. It leaves a multiplexed
+    master behind, which is how a pane reaches a password-authenticated host at
+    all — a pane's ssh starts after runon has exited and its askpass helper has
+    been deleted, so the pane has no credential of its own to offer.
+
+    And it is the only check there is. A pane runs unattended after the process
+    that opened it is gone, so runon cannot learn how it ended; without this it
+    printed a session name and exited 0 while every pane in it sat dead on
+    "Permission denied", which is exactly the false success `runon` promises
+    not to report.
+    """
+    if not hasattr(transport, "prime"):
+        return hosts
+
+    checked = runner.fan_out(hosts, transport.prime, parallel=1)
+    failed = [r for r in checked if not r.ok]
+    if failed:
+        print("could not log in, so these get no pane:", file=sys.stderr)
+        emit(failed, stream=sys.stderr)
+
+    ok = {r.host for r in checked if r.ok}
+    reachable = [h for h in hosts if h.name in ok]
+
+    if reachable and not transport.multiplexes():
+        # Without a master to ride, the pane has to ask for itself, which it
+        # can do — it has a terminal — but it is a surprise worth naming.
+        print(
+            "connection reuse is off, so a host that needs a password will ask "
+            "for it in its own pane",
+            file=sys.stderr,
+        )
+    return reachable
 
 
 def _print_plan(hosts, action: str) -> None:

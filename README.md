@@ -34,7 +34,7 @@ program, or walking away from a menu, exits `130` — otherwise
 
 ## Quickstart
 
-Python 3.11+. No runtime dependencies.
+Python 3.10+. Nothing else to install.
 
 ```bash
 pip install runon            # or: pipx install runon
@@ -42,6 +42,21 @@ pip install runon            # or: pipx install runon
 runon list programs                        # nothing to set up first
 runon local run-program hello-world -v
 ```
+
+**If pip says `No matching distribution found for runon`,** your python is older
+than 3.10 — that message means "nothing here fits your interpreter", not "no
+such package". Ubuntu 20.04 ships 3.8, so point runon at a newer one:
+
+```bash
+pipx install --python python3.11 runon          # if you have pipx
+# or, without it:
+sudo apt install python3.11-venv
+python3.11 -m venv ~/.venvs/runon && ~/.venvs/runon/bin/pip install runon
+```
+
+On 3.11 and up runon installs nothing but itself. On 3.10, which has no
+`tomllib`, pip also fetches `tomli` — the same parser the standard library
+adopted.
 
 ## One workspace, remembered
 
@@ -248,6 +263,10 @@ before a rollout has half-finished on the hosts it could resolve.
 `runon` shells out to the system `ssh` and `scp`. It does **not** embed an SSH
 library.
 
+The command runon sends is `env … /bin/sh -c '…'`, so what login shell the
+remote account happens to have does not matter — `tcsh`, `fish` and `zsh`
+accounts all behave the same as `sh` ones.
+
 That means your `~/.ssh/config`, your agent, your keys, your `ProxyJump` and
 your `known_hosts` all work exactly as they already do, and `runon` never has
 to grow its own half-version of any of it. Connections run with `BatchMode=yes`,
@@ -435,7 +454,21 @@ runon host  --host web-1    --persist no   run-program --program deploy
 ```
 
 It is OpenSSH's own `ControlMaster`, so nothing is stored: the state is a live
-socket that closes itself when the timer runs out.
+socket that closes itself when the timer runs out. A unix socket path is capped
+near 104 characters, so if your home directory is long enough to push it past
+that, runon puts the socket somewhere shorter — and if it can find nowhere at
+all, it runs without reuse rather than failing the command. Reuse is a speed-up;
+it is never the reason something does not run.
+
+### How long a host gets
+
+Each host is given an hour before runon gives up on it. A package upgrade or a
+migration can take longer, so say so:
+
+```bash
+runon host --host db-1 run-program migrate --timeout 14400   # four hours
+runon host --host db-1 run-program migrate --timeout 0       # no deadline
+```
 
 The tradeoff, stated plainly: **while that socket is open, anything that can
 reach it can use your authenticated session without knowing your credential.**
@@ -479,11 +512,13 @@ does — a program without them behaves exactly as it did before they existed.
 ```toml
 title       = "Deploy the API"
 description = "Ships the current build and restarts the service"
+details     = "The longer version, shown in the picker's preview pane."
 category    = "deploy"
 status      = "active"          # or experimental, deprecated
 destructive = true
 confirm_message = "Restarts production and drops in-flight requests."
 tags        = ["api", "prod"]
+related     = ["rollback"]      # shown in the preview as "see also"
 ```
 
 `description` is what `runon list programs` and the picker show. `destructive`
@@ -526,6 +561,15 @@ secret = true            # read with getpass, never echoed
 Answers reach the script as `RUNON_PROMPT_BRANCH`, `RUNON_PROMPT_TOKEN`. A list
 of tables rather than one table because an interview reads in an order and a
 TOML table has none.
+
+**What `secret` does and does not do.** It keeps the value off your screen and
+out of your shell history. It is not a secure channel: on a remote run the
+answer is exported by the command runon hands to ssh, so it is visible in `ps`
+to other users on your machine and on the target for as long as the program
+runs. That is true of every ssh tool that exports variables — it is why the
+*ssh* password takes a different route, through a 0600 file only you can read
+(see Passwords). If a credential must not be readable by anyone else on either
+machine, have the program fetch it on the target instead of taking it here.
 
 ```
 $ runon local run-program deploy
@@ -599,7 +643,9 @@ Conventions that keep this pleasant, learned the hard way:
 - **The first comment line is the description.** `runon list programs` shows
   it, so it cannot drift out of date the way a separate metadata file would.
 - **Take arguments, don't hardcode.** Arguments after the program name are
-  passed through, quoted: `run-program --program disk-report 80`.
+  passed through, quoted: `run-program --program disk-report 80`. Put `--`
+  first if any of them starts with a dash, or runon reads it as one of its own:
+  `run-program disk-report -- --since 1h`.
 
 ## Commands
 
@@ -614,15 +660,24 @@ runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs
 runon completion [SHELL] [--install] set up shell completion
 
-runon local run-program  [P] [args...]     (or --program P)
-    -y/--yes   agree to a destructive program in advance
+runon local run-program  [P] [--] [args...]   (or --program P)
+    -y/--yes      agree to a destructive program in advance
+    --timeout N   seconds before giving up (default 3600; 0 waits)
+    --            everything after it goes to main.sh, dashes and all
 runon local run-layout   [--layout L]
 
-runon host  [-H/--host H]  [flags] <verb> [P] [args...]
-runon group [--group G] [flags] <verb> [P] [-j N] [args...]
+runon host  [-H/--host H] [where-flags] <verb> [P] [--] [args...] [run-flags]
+runon group [--group G]   [where-flags] <verb> [P] [--] [args...] [run-flags]
 
-  flags: --ask-password  --persist D  --watch  --headless/--no-tmux
-         -j/--parallel N (group)  -y/--yes  --dry-run  --verbose
+  where-flags go before the verb -- they are about reaching the machines:
+         --ask-password  --persist D  --watch  --headless/--no-tmux
+         -j/--parallel N (group only)
+
+  run-flags go after the verb -- they are about the program being run:
+         -y/--yes  --dry-run  -v/--verbose  --timeout N  -p/--program P
+
+  verbs: copy-program  run-program  copy-run-program
+         copy --local-dir DIR --remote-dir DIR
 
 global: -C/--directory DIR   use this workspace, just for this command
         --inventory FILE     use this inventory instead of the workspace's

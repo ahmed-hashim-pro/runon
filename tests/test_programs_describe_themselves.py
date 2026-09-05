@@ -8,7 +8,7 @@ from test_cli import run
 
 from runon import asking, cli
 from runon.errors import ProgramInvalid, RunonError
-from runon.program import Program, Prompt
+from runon.program import Program, Prompt, check_runnable
 
 
 def _program(tmp_path, **files) -> Program:
@@ -400,3 +400,40 @@ class TestSayingNoIsNotSuccess:
         )
 
         assert code == cli.CANCELLED
+
+
+class TestALineEndingThatBreaksTheShell:
+    """CRLF is the failure that arrives disguised as something else.
+
+    A main.sh saved on Windows, or checked out with core.autocrlf=true, has a
+    shebang ending in a carriage return. The kernel looks for an interpreter
+    called "/usr/bin/env sh\\r", and the shell reports `./main.sh: not found`
+    — which reads as a missing program. Workspaces are meant to be committed
+    and shared, so this reaches someone who did nothing wrong.
+    """
+
+    def _program(self, tmp_path, body: bytes):
+        directory = tmp_path / "programs" / "winbox"
+        directory.mkdir(parents=True)
+        (directory / "main.sh").write_bytes(body)
+        return Program(name="winbox", path=directory)
+
+    def test_crlf_is_refused_with_the_command_that_fixes_it(self, tmp_path):
+        program = self._program(tmp_path, b"#!/usr/bin/env sh\r\necho hi\r\n")
+
+        with pytest.raises(ProgramInvalid) as raised:
+            check_runnable(program)
+
+        assert "CRLF" in str(raised.value)
+        assert "sed -i" in str(raised.value)
+
+    def test_a_normal_program_is_left_alone(self, tmp_path):
+        check_runnable(self._program(tmp_path, b"#!/usr/bin/env sh\necho hi\n"))
+
+    def test_a_lone_cr_inside_the_body_is_not_our_business(self, tmp_path):
+        # A heredoc that deliberately contains a carriage return is legal, and
+        # only the first line decides whether the interpreter can be found.
+        check_runnable(self._program(tmp_path, b"#!/bin/sh\nprintf 'a\\r\\n'\n"))
+
+    def test_an_unreadable_entry_point_is_left_to_the_run_to_report(self, tmp_path):
+        check_runnable(Program(name="gone", path=tmp_path / "nope"))

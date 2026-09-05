@@ -36,6 +36,7 @@ class Choice:
     description: str = ""
     details: str = ""
     tags: tuple[str, ...] = ()
+    related: tuple[str, ...] = ()
     note: str = ""
 
 
@@ -239,6 +240,11 @@ class _State:
         lines = [f"{CSI}2m  {_clip_plain(body, width - 4)}{CSI}0m" if body else ""]
         if choice.tags:
             lines.append(f"{CSI}2m  tags: {', '.join(choice.tags)}{CSI}0m")
+        if choice.related:
+            # meta.toml has always accepted `related`, and write_meta has always
+            # been willing to write it, but nothing ever showed it: the one
+            # field a program could declare and get silence for.
+            lines.append(f"{CSI}2m  see also: {', '.join(choice.related)}{CSI}0m")
         return lines
 
     # -- what the keys do ----------------------------------------------------

@@ -59,8 +59,21 @@ def _ask(prompt: Prompt, stream) -> str:
     label = f"{prompt.label}{suffix}: "
     try:
         if prompt.secret:
-            # Never echoed, and never written anywhere runon controls: it
-            # reaches the program as an environment variable and stops there.
+            # Never echoed, and never written to disk by runon.
+            #
+            # `secret` is about the screen and the shell history, and it stops
+            # there. It is *not* a secure channel: on a remote run the value is
+            # exported by the command string runon hands to ssh, so it is in
+            # the argv of the local ssh process and of the remote login shell,
+            # where `ps` can read it for as long as the program runs. That is
+            # what every ssh-based tool that exports variables does, and it is
+            # the same exposure askpass.py refuses for the *ssh* password —
+            # which is why that one goes through a 0600 file instead.
+            #
+            # For a credential that must not be readable by another user on
+            # either machine, have the program fetch it on the target — from a
+            # secrets manager, or a 0600 file already there — rather than
+            # passing it through here.
             value = getpass.getpass(label)
         elif stream is not None:
             print(label, end="", file=sys.stderr, flush=True)

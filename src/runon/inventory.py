@@ -6,12 +6,13 @@ to read the whole inventory in one screen and diff it in a review.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
-import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from . import _tomllib as tomllib
 from .errors import ConfigError, UnknownGroup, UnknownHost
 
 DEFAULT_FILENAME = "inventory.toml"
@@ -40,6 +41,22 @@ class Host:
     def ssh_target(self) -> str:
         return f"{self.user}@{self.address}" if self.user else self.address
 
+    @property
+    def scp_target(self) -> str:
+        """The same target, spelled the way scp needs it.
+
+        scp splits host from path on the first colon, so a bare IPv6 literal
+        turns into a hostname of "" and a path of ":1:...", and scp quietly
+        falls back to copying locally: `cp: cannot create directory
+        '::1:~/.runon/programs/'`. Brackets are how scp is told where the
+        address ends. ssh needs no such help, which is why only this side of
+        the transport does it.
+        """
+        if not _is_ipv6(self.address):
+            return self.ssh_target
+        bracketed = f"[{self.address.strip('[]')}]"
+        return f"{self.user}@{bracketed}" if self.user else bracketed
+
 
 @dataclass(frozen=True)
 class Group:
@@ -66,10 +83,16 @@ class Inventory:
         if name in self.hosts:
             return self.hosts[name]
         if _looks_like_address(name):
-            return Host(name=name, address=name)
+            # Brackets are scp's way of saying where an IPv6 address ends, not
+            # part of the address: handed to ssh as typed, "[::1]" is a
+            # hostname it cannot resolve. scp_target puts them back.
+            address = name.strip("[]") if _is_ipv6(name) else name
+            return Host(name=name, address=address)
         raise UnknownHost(
             f"no host named {name!r} in the inventory, and it does not look like an address.\n"
-            f"Known hosts: {', '.join(sorted(self.hosts)) or '(none)'}"
+            f"Known hosts: {', '.join(sorted(self.hosts)) or '(none)'}\n"
+            f"If {name!r} is a Host alias from your ~/.ssh/config, add it:\n"
+            f"  runon add-host {name} --address {name}"
         )
 
     def group(self, name: str) -> list[Host]:
@@ -97,8 +120,24 @@ def _with_group_auth(host: Host, group: Group) -> Host:
 
 
 def _looks_like_address(value: str) -> bool:
-    """True for things ssh would accept but an inventory lookup missed."""
-    return "@" in value or "." in value or value == "localhost"
+    """True for things ssh would accept but an inventory lookup missed.
+
+    Deliberately not "anything at all": a typo'd inventory name should be
+    reported as a typo, not handed to ssh to spend ConnectTimeout failing to
+    resolve. A bare word is therefore refused even though ssh might resolve it
+    — see the hint in Inventory.host for what to do with an ssh_config alias.
+
+    IPv6 literals are addresses by any reading, and were refused because they
+    contain neither an "@" nor a dot.
+    """
+    return "@" in value or "." in value or value == "localhost" or _is_ipv6(value)
+
+
+def _is_ipv6(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value.strip("[]")).version == 6
+    except ValueError:
+        return False
 
 
 def load(path: Path | None = None) -> Inventory:
