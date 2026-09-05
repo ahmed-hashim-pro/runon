@@ -222,12 +222,39 @@ which must run without opening tmux at all.
 ## 12. Non-interactive safety
 
 With stdin closed, these must **fail with a clear message**, not hang and not
-exit 0 having done nothing:
+exit 0 having done nothing.
+
+The group case only reaches the guard if groups exist, so make some first —
+including the single-group case, which used to be auto-selected and run:
 
 ```bash
-runon host run-program hello-world --dry-run < /dev/null; echo "exit=$?"
+cat >> ~/.runon/workspace/inventory.toml <<'EOF'
+
+[groups.one]
+hosts = ["self"]
+EOF
+
+runon host  run-program hello-world --dry-run < /dev/null; echo "exit=$?"
+runon group run-program hello-world --dry-run < /dev/null; echo "exit=$?"   # one group
+```
+
+Both must refuse and exit 2. **The single-group case matters**: with nobody
+watching, runon must not choose the only group for you, because tomorrow there
+are two and the same cron line means something else.
+
+Then add a second group and check it still refuses, naming both:
+
+```bash
+cat >> ~/.runon/workspace/inventory.toml <<'EOF'
+
+[groups.two]
+hosts = ["self", "self-env"]
+EOF
+
 runon group run-program hello-world --dry-run < /dev/null; echo "exit=$?"
 ```
+
+Remove both group blocks afterwards.
 
 ---
 
