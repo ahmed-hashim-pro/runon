@@ -571,7 +571,7 @@ runon local run-layout   [--layout L]
 runon host  [--host H]  [flags] <verb> [P] [args...]
 runon group [--group G] [flags] <verb> [P] [-j N] [args...]
 
-  flags: --ask-password  --persist D  --watch  --dry-run  --verbose
+  flags: --ask-password  --persist D  --watch  --headless  --dry-run  --verbose
 ```
 
 Omit `--program`, `--host` or `--group` and you get a menu — on a terminal.
@@ -586,6 +586,35 @@ Pass --group explicitly. Choices: production, staging
 $ echo $?
 2
 ```
+
+### Choosing a program
+
+Leave `--program` out on a terminal and you get a picker: category tabs, a
+Recent tab, type-to-filter, and a preview of what the selected one does.
+
+```
+Which program?
+ All   Recent   checks   data   deploy
+
+ › db-backup   [destructive]  — Dump and upload
+   deploy                     — Ship the current build
+   disk-report [experimental] — Check free space
+   rollback                   — Put the last build back
+
+  Dump and upload
+  ↑↓ move   ←→ category   type to filter   ⏎ select   esc cancel
+```
+
+Categories, notes and previews come from each program's `meta.toml`; Recent is
+the last ten you ran, kept in `~/.runon/config.toml`.
+
+It is written against the terminal directly rather than with a library —
+`runon` has no runtime dependencies, and drawing a list is not a good reason to
+acquire one that has to be present on every machine anyone installs this on.
+
+Nothing about it is load-bearing. No terminal, no `termios`, or any error while
+drawing, and you get the numbered menu instead. `RUNON_PLAIN=1` forces the
+menu if you prefer it.
 
 Shell completion knows the scopes and verbs, and asks `runon` itself for
 program, host, group and layout names — right after the verb, where you would

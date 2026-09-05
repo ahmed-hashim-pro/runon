@@ -165,6 +165,19 @@ jobs:
                 /tmp/clean/bin/runon local run-program asker -v < /dev/null)
           echo "$out" | grep -q "b=hotfix"
 
+      # The picker draws escape sequences. None of them may reach something
+      # that is not a terminal -- a log, a pipe, a CI job.
+      - name: The picker declines when there is no terminal
+        env:
+          RUNON_HOME: /tmp/plain
+        run: |
+          /tmp/clean/bin/runon list programs > /dev/null
+          /tmp/clean/bin/runon new-program second < /dev/null
+          out=$(/tmp/clean/bin/runon local run-program < /dev/null 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q -- "--program"
+          ! printf '%s' "$out" | grep -q "$(printf '\033')"
+
       - name: Moving the workspace is remembered
         run: |
           /tmp/clean/bin/runon init /tmp/ops

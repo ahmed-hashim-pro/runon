@@ -778,3 +778,56 @@ class TestProgramAsPositional:
 
         assert code == 0
         assert any("hello-world" in command and "80" in command for _, command in transport.calls)
+
+
+class TestHeadless:
+    """--headless / --no-tmux: the same command where panes cannot open."""
+
+    @pytest.fixture
+    def fake(self, monkeypatch):
+        from runon.transport import FakeTransport
+
+        transport = FakeTransport()
+        monkeypatch.setattr(cli, "SSHTransport", lambda **_: transport)
+        return transport
+
+    def test_it_collects_output_instead_of_opening_panes(
+        self, fake, monkeypatch, inventory_file, capsys
+    ):
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        monkeypatch.setattr(
+            cli.watch, "open_panes", lambda *a, **k: pytest.fail("opened panes anyway")
+        )
+
+        code, _, err = run(
+            ["group", "--group", "web", "--watch", "--no-tmux",
+             "run-program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 0
+        assert sorted(h for h, _ in fake.calls) == ["web-1", "web-2"]
+        assert "--no-tmux" in err
+
+    def test_headless_is_the_same_flag(self):
+        parser = cli.build_parser()
+        argv = ["host", "--host", "h", "--headless", "run-program", "p"]
+        assert parser.parse_args(argv).no_tmux is True
+
+    def test_watch_alone_still_opens_panes(self, fake, monkeypatch, inventory_file, capsys):
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        opened = {}
+        monkeypatch.setattr(
+            cli.watch, "open_panes",
+            lambda hosts, commands, **kw: opened.update(n=len(commands)) or "s1",
+        )
+
+        code, _, _ = run(
+            ["group", "--group", "web", "--watch", "run-program", "hello-world"], root, capsys
+        )
+
+        assert code == 0
+        assert opened["n"] == 2

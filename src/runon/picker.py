@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
+from . import config, screen
 from .errors import RunonError
 from .program import Program
 
@@ -23,11 +25,17 @@ def _require_a_terminal(stream, flag: str, choices: list[str]) -> None:
     )
 
 
-def choose(programs: list[Program], *, stream=None, prompt_stream=None) -> Program | None:
+def choose(
+    programs: list[Program], *, stream=None, prompt_stream=None, rich: bool | None = None
+) -> Program | None:
     """Numbered menu on stderr, so stdout stays pipeable.
 
     Returns None if the user aborts, which the caller treats as a clean exit
     rather than an error — changing your mind is not a failure.
+
+    On a real terminal this hands off to the full-screen picker, and falls back
+    to the menu below if that cannot draw. The menu stays the thing that always
+    works, which is why the picker is allowed to be the part that might not.
     """
     stream = stream or sys.stdin
     out = prompt_stream or sys.stderr
@@ -37,6 +45,13 @@ def choose(programs: list[Program], *, stream=None, prompt_stream=None) -> Progr
     if len(programs) == 1:
         return programs[0]
     _require_a_terminal(stream, "--program", [p.name for p in programs])
+
+    if rich is None:
+        rich = screen.available(stream) and os.environ.get("RUNON_PLAIN") != "1"
+    if rich:
+        chosen = _choose_richly(programs, stream, out)
+        if chosen is not _FELL_BACK:
+            return chosen
 
     for index, program in enumerate(programs, 1):
         suffix = f"  — {program.description}" if program.description else ""
@@ -54,6 +69,61 @@ def choose(programs: list[Program], *, stream=None, prompt_stream=None) -> Progr
         if raw.isdigit() and 1 <= int(raw) <= len(programs):
             return programs[int(raw) - 1]
         print(f"  not a choice: {raw!r}", file=out)
+
+
+#: Sentinel for "the picker could not draw; use the menu".
+_FELL_BACK = object()
+
+
+def _choose_richly(programs: list[Program], stream, out):
+    """Runs the full-screen picker, or gives up quietly.
+
+    Every failure falls back rather than propagating: a terminal that does not
+    support this should cost you a plainer menu, not your run.
+    """
+    choices = []
+    for program in programs:
+        try:
+            meta = program.meta()
+        except RunonError:
+            # A broken meta.toml is worth an error when you run the program,
+            # not when you are still deciding which one to run.
+            meta = None
+        choices.append(
+            screen.Choice(
+                key=program.name,
+                label=program.name,
+                category=(meta.category if meta else "uncategorized"),
+                # `description` already falls back to main.sh's first comment,
+                # so a program with no meta.toml still says what it does.
+                description=program.description,
+                details=(meta.details if meta else ""),
+                tags=(meta.tags if meta else ()),
+                note=_note(meta),
+            )
+        )
+
+    try:
+        picked = screen.choose(
+            choices, title="Which program?", recent=config.recent_programs(),
+            stream=stream, out=out,
+        )
+    except Exception:
+        return _FELL_BACK
+    if picked is None:
+        return None
+    return next(p for p in programs if p.name == picked)
+
+
+def _note(meta) -> str:
+    if meta is None:
+        return ""
+    marks = []
+    if meta.destructive:
+        marks.append("destructive")
+    if meta.status != "active":
+        marks.append(meta.status)
+    return f"[{', '.join(marks)}]" if marks else ""
 
 
 #: Returned instead of a name when the menu's last entry was chosen.
