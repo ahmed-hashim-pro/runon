@@ -52,6 +52,18 @@ class Transport(Protocol):
     def copy(self, host: Host, local: Path, remote: str) -> Result: ...
 
 
+class Raw(str):
+    """A value that is already shell text, exported without quoting.
+
+    For runon's own paths only. A remote path has to be expanded by the remote
+    shell — quoting "$HOME/.runon" makes it a literal dollar sign, and quoting
+    "~/.runon" makes it a literal tilde, which is a directory nothing has.
+
+    Everything a user supplies stays quoted, because host vars, parameters and
+    prompt answers are values, not shell.
+    """
+
+
 def _env_prefix(env: dict[str, str] | None) -> str:
     """Renders env vars as an `export` statement for the remote shell.
 
@@ -68,7 +80,9 @@ def _env_prefix(env: dict[str, str] | None) -> str:
         return ""
     import shlex
 
-    assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env.items()))
+    assignments = " ".join(
+        f"{k}={v if isinstance(v, Raw) else shlex.quote(v)}" for k, v in sorted(env.items())
+    )
     return f"export {assignments}; "
 
 
@@ -261,6 +275,12 @@ class FakeTransport:
     name: str = "fake"
     #: (host, command) pairs, in order.
     calls: list[tuple[str, str]] = field(default_factory=list)
+    #: The environment each of those commands would have run with.
+    #:
+    #: Recorded because half of proving a program does the right thing is the
+    #: values it was given, and a fake that drops them can only answer half
+    #: the question.
+    envs: list[dict[str, str]] = field(default_factory=list)
     copies: list[tuple[str, str, str]] = field(default_factory=list)
     #: Exit code per command substring; the first match wins.
     responses: dict[str, Result] = field(default_factory=dict)
@@ -268,6 +288,7 @@ class FakeTransport:
 
     def run(self, host: Host, command: str, *, env: dict[str, str] | None = None) -> Result:
         self.calls.append((host.name, command))
+        self.envs.append(dict(env or {}))
         for needle, result in self.responses.items():
             if needle in command:
                 return Result(host.name, command, result.exit_code, result.stdout, result.stderr)

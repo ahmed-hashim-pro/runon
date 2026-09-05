@@ -160,3 +160,80 @@ class TestFakeResponses:
         fake = FakeTransport()
         for method in ("run", "copy", "ssh_argv"):
             assert callable(getattr(fake, method, None)), method
+
+
+class TestRawValues:
+    """runon's own remote paths have to be expanded by the remote shell.
+
+    Everything a user supplies must not be. Both in one prefix, so the test
+    that proves the expansion also proves the quoting still holds.
+    """
+
+    def _run(self, env, script, home):
+        import subprocess
+
+        from runon.transport import _env_prefix
+
+        return subprocess.run(
+            ["/bin/sh", "-c", _env_prefix(env) + script],
+            capture_output=True,
+            text=True,
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        ).stdout
+
+    def test_a_raw_path_is_expanded_by_the_shell(self, tmp_path):
+        from runon.transport import Raw
+
+        out = self._run(
+            {"RUNON_FUNCTIONS": Raw('"$HOME/.runon"/functions')},
+            'echo "$RUNON_FUNCTIONS"',
+            tmp_path,
+        )
+
+        assert out.strip() == f"{tmp_path}/.runon/functions"
+
+    def test_a_quoted_tilde_would_not_have_been(self, tmp_path):
+        """What the bug looked like: `.: cannot open ~/.runon/functions/say.sh`."""
+        out = self._run(
+            {"RUNON_FUNCTIONS": "~/.runon/functions"}, 'echo "$RUNON_FUNCTIONS"', tmp_path
+        )
+
+        assert out.strip() == "~/.runon/functions"
+
+    def test_a_user_value_is_still_only_a_value(self, tmp_path):
+        out = self._run(
+            {"RUNON_VAR_ROLE": "a; echo INJECTED"}, 'echo "role=$RUNON_VAR_ROLE"', tmp_path
+        )
+
+        assert "INJECTED" not in out.replace("role=a; echo INJECTED", "")
+        assert out.strip() == "role=a; echo INJECTED"
+
+    def test_both_kinds_in_one_command(self, tmp_path):
+        from runon.transport import Raw
+
+        out = self._run(
+            {
+                "RUNON_FUNCTIONS": Raw('"$HOME/.runon"/functions'),
+                "RUNON_PARAM_MSG": "$HOME is not expanded here",
+            },
+            'echo "$RUNON_FUNCTIONS"; echo "$RUNON_PARAM_MSG"',
+            tmp_path,
+        )
+
+        lines = out.strip().splitlines()
+        assert lines[0] == f"{tmp_path}/.runon/functions"
+        assert lines[1] == "$HOME is not expanded here"
+
+    def test_the_functions_path_a_remote_run_actually_sends(self, workspace, tmp_path):
+        from runon import runner
+        from runon.inventory import Host
+        from runon.transport import FakeTransport
+
+        fake = FakeTransport()
+        runner.run_program(
+            fake, Host("web-1", "10.0.0.1"), workspace, workspace.program("hello-world")
+        )
+
+        functions = fake.envs[-1]["RUNON_FUNCTIONS"]
+        assert functions == '"$HOME/.runon"/functions'
+        assert "~" not in functions

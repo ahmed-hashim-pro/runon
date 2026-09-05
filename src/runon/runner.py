@@ -14,11 +14,18 @@ from pathlib import Path
 
 from .inventory import Host
 from .program import ENTRY_POINT, Program, Workspace
-from .transport import Result, Transport
+from .transport import Raw, Result, Transport
 
 #: Where a copied program lands on the target. Under the user's home rather than
 #: /opt or /srv so nothing needs root to work.
 REMOTE_ROOT = "~/.runon"
+
+#: The same directory, written so the *remote* shell expands it.
+#:
+#: REMOTE_ROOT is fine unquoted inside a command — cd, mkdir and scp all let
+#: the remote shell expand the tilde. As an exported value it is quoted, and a
+#: quoted tilde is a directory that does not exist.
+REMOTE_ROOT_EXPR = '"$HOME/.runon"'
 
 
 @dataclass(frozen=True)
@@ -119,7 +126,7 @@ def run_program(
 ) -> Result:
     if remote:
         directory = remote_program_dir(program.name)
-        functions_dir = f"{REMOTE_ROOT}/functions"
+        functions_dir = Raw(f"{REMOTE_ROOT_EXPR}/functions")
     else:
         # Absolute, because the command below cds into the program directory
         # first: a relative path from `runon -C examples` would be resolved
@@ -153,7 +160,9 @@ def watch_command(
     exports = " ".join(
         f"{k}={shlex.quote(v)}"
         for k, v in sorted(
-            program_env(Host("", ""), program, f"{REMOTE_ROOT}/functions", prompts).items()
+            program_env(
+                Host("", ""), program, Raw(f"{REMOTE_ROOT_EXPR}/functions"), prompts
+            ).items()
         )
         if not k.startswith(("RUNON_HOST", "RUNON_ADDRESS"))
     )

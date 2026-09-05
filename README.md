@@ -435,6 +435,7 @@ fake = FakeTransport()
 runner.run_program(fake, Host("web-1", "web-1.example.com"), workspace, program)
 
 fake.calls    # [("web-1", "cd ~/.runon/programs/... && ./main.sh")]
+fake.envs     # the variables each of those would have run with
 fake.copies   # what would have been shipped
 ```
 
