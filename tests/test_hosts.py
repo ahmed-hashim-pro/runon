@@ -383,3 +383,64 @@ class TestPasswordFromStdin:
             cli.build_parser().parse_args(
                 ["add-host", "web-1", "--password", "hunter2"]
             )
+
+
+class TestTheTerminalIsGivenUpForAPassword:
+    """OpenSSH before 8.4 ignores SSH_ASKPASS_REQUIRE.
+
+    It consults the helper only when it cannot open /dev/tty, so with a
+    terminal attached an 8.2 client — Ubuntu 20.04 — prompted the operator and
+    never read the stored password. Reported from a real machine as:
+
+        medo@192.168.50.64's password:
+        FAILED (255) could not create ~/.runon/programs on the target
+    """
+
+    def _spy(self, monkeypatch):
+        from runon import transport
+
+        seen = {}
+
+        class Done:
+            returncode, stdout, stderr = 0, "", ""
+
+        def fake(argv, **kwargs):
+            seen.update(kwargs)
+            return Done()
+
+        monkeypatch.setattr(transport.subprocess, "run", fake)
+        return seen
+
+    def test_a_password_run_has_no_controlling_terminal(self, monkeypatch):
+        from runon.transport import SSHTransport
+
+        monkeypatch.setenv("WEB1_PASS", "s3cret")
+        seen = self._spy(monkeypatch)
+
+        SSHTransport(persist=None).run(
+            Host("web-1", "10.0.0.1", password_env="WEB1_PASS"), "true"
+        )
+
+        assert seen["start_new_session"] is True
+
+    def test_a_key_run_keeps_it(self, monkeypatch):
+        """Nothing to type, so nothing to protect against being asked for."""
+        from runon.transport import SSHTransport
+
+        seen = self._spy(monkeypatch)
+
+        SSHTransport(persist=None).run(Host("web-2", "10.0.0.2"), "true")
+
+        assert seen["start_new_session"] is False
+
+    def test_a_copy_gives_it_up_too(self, monkeypatch, tmp_path):
+        from runon.transport import SSHTransport
+
+        monkeypatch.setenv("WEB1_PASS", "s3cret")
+        seen = self._spy(monkeypatch)
+
+        SSHTransport(persist=None).copy(
+            Host("web-1", "10.0.0.1", password_env="WEB1_PASS"), tmp_path, "/tmp/x"
+        )
+
+        assert seen["start_new_session"] is True

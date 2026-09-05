@@ -217,7 +217,18 @@ class SSHTransport:
                 local_env = {**os.environ, **stack.enter_context(askpass_env(password))}
             try:
                 completed = subprocess.run(
-                    argv, capture_output=True, text=True, timeout=self.timeout, env=local_env
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=local_env,
+                    # No controlling terminal when a password is in play.
+                    # SSH_ASKPASS_REQUIRE=force only exists from OpenSSH 8.4;
+                    # before that — Ubuntu 20.04 ships 8.2 — ssh consults the
+                    # askpass helper only when it cannot open /dev/tty, so with
+                    # a terminal attached it prompted the user instead and the
+                    # stored password was never offered.
+                    start_new_session=password is not None,
                 )
             except subprocess.TimeoutExpired:
                 return Result(host.name, label, 124, "", f"timed out after {self.timeout}s")
