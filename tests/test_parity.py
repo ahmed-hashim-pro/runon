@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import tty
 
-from runon import cli, runner, watch
+from runon import cli, completion, runner, watch
 from runon.completion import script
 from runon.doctor import Check, report, run_checks
 from runon.errors import ProgramInvalid
@@ -339,3 +339,87 @@ class TestCompletionRuns:
         assert self._complete(tmp_path, ["runon", "local", "run-program", ""]) == [
             "hello-world"
         ]
+
+
+class TestInstallingCompletion:
+    """`runon completion --install` — because a script you have to place
+    yourself is a script most people never place."""
+
+    @pytest.fixture(autouse=True)
+    def _own_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        # no writable system directory unless a test says so
+        monkeypatch.setattr(completion, "ZSH_SITE_DIRS", ())
+
+    def test_bash_lands_where_bash_looks(self, tmp_path):
+        path, remaining = completion.install("bash")
+
+        assert path == tmp_path / "home/.local/share/bash-completion/completions/runon"
+        assert path.read_text().startswith("# runon bash completion")
+        assert "new shell" in remaining
+
+    def test_fish_needs_nothing_further(self, tmp_path):
+        path, remaining = completion.install("fish")
+
+        assert path == tmp_path / "home/.config/fish/completions/runon.fish"
+        assert remaining == ""
+
+    def test_zsh_falls_back_and_says_what_to_add(self, tmp_path):
+        path, remaining = completion.install("zsh")
+
+        assert path == tmp_path / "home/.zsh/completions/_runon"
+        assert "fpath=" in remaining and ".zshrc" in remaining
+
+    def test_zsh_needs_no_rc_edit_when_a_site_directory_is_writable(
+        self, tmp_path, monkeypatch
+    ):
+        site = tmp_path / "site-functions"
+        site.mkdir()
+        monkeypatch.setattr(completion, "ZSH_SITE_DIRS", (str(site),))
+
+        path, remaining = completion.install("zsh")
+
+        assert path == site / "_runon"
+        assert "fpath=" not in remaining
+
+    def test_an_unwritable_site_directory_is_skipped(self, tmp_path, monkeypatch):
+        site = tmp_path / "readonly"
+        site.mkdir(mode=0o500)
+        monkeypatch.setattr(completion, "ZSH_SITE_DIRS", (str(site),))
+
+        assert completion.install_path("zsh") == tmp_path / "home/.zsh/completions/_runon"
+
+    def test_it_overwrites_an_older_copy(self, tmp_path):
+        path, _ = completion.install("bash")
+        path.write_text("stale", encoding="utf-8")
+
+        completion.install("bash")
+
+        assert "stale" not in path.read_text()
+
+    def test_the_shell_is_taken_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("SHELL", "/usr/local/bin/fish")
+        assert completion.default_shell() == "fish"
+
+    def test_an_unknown_shell_is_not_guessed(self, monkeypatch):
+        monkeypatch.setenv("SHELL", "/bin/nonesuch")
+        assert completion.default_shell() is None
+
+    def test_the_cli_says_so_rather_than_guessing(self, tmp_path, monkeypatch, capsys):
+        from test_cli import run
+
+        monkeypatch.setenv("SHELL", "/bin/nonesuch")
+        code, _, err = run(["completion"], tmp_path, capsys)
+
+        assert code == 2
+        assert "bash|zsh|fish" in err
+
+    def test_printing_still_works_and_writes_nothing(self, tmp_path, capsys):
+        from test_cli import run
+
+        code, out, _ = run(["completion", "bash"], tmp_path, capsys)
+
+        assert code == 0
+        assert "_runon()" in out
+        assert not (tmp_path / "home").exists()

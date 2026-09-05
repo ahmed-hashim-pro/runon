@@ -572,7 +572,7 @@ runon add-host [NAME] [-a ADDR] [-u USER] [--port N]
 runon new-program <name>            create one from the template
 runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs
-runon completion bash|zsh|fish      print a completion script
+runon completion [SHELL] [--install] set up shell completion
 
 runon local run-program  [P] [args...]     (or --program P)
     -y/--yes   agree to a destructive program in advance
@@ -638,10 +638,32 @@ $ runon group --group prod copy-run-program de<TAB>
 deploy
 ```
 
+Nothing is registered by `pip install` — a wheel has no way to run anything
+afterwards — so it is one command:
+
 ```bash
-runon completion zsh > "${fpath[1]}/_runon"     # then: compinit
-runon completion bash > /usr/local/etc/bash_completion.d/runon
-runon completion fish > ~/.config/fish/completions/runon.fish
+runon completion --install
+```
+
+It works out your shell from `$SHELL` and writes the script where that shell
+looks: `~/.local/share/bash-completion/completions/` for bash,
+`~/.config/fish/completions/` for fish, and for zsh a `site-functions`
+directory if one is writable, so there is nothing to add to `.zshrc`. When
+there is not, it says exactly what to add.
+
+```
+$ runon completion --install
+  wrote /opt/homebrew/share/zsh/site-functions/_runon
+
+Start a new shell to pick it up.
+```
+
+Name a shell to install for a different one, or leave off `--install` to print
+the script and place it yourself:
+
+```bash
+runon completion --install fish
+runon completion zsh > "${fpath[1]}/_runon"
 ```
 
 This is why `runon list` prints only names on stdout and puts everything else

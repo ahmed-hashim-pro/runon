@@ -10,6 +10,9 @@ program and host names to the tool itself.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 SCOPES = "local host group list init new-program doctor completion config add-host"
 REMOTE_VERBS = "copy copy-program run-program copy-run-program"
 
@@ -96,3 +99,72 @@ SCRIPTS = {"bash": BASH, "zsh": ZSH, "fish": FISH}
 
 def script(shell: str) -> str:
     return SCRIPTS[shell]
+
+
+def default_shell() -> str | None:
+    """The shell that launched us, from $SHELL.
+
+    $SHELL rather than the parent process: it is the login shell, which is the
+    one whose startup files a completion has to be installed into.
+    """
+    name = Path(os.environ.get("SHELL", "")).name
+    return name if name in SCRIPTS else None
+
+
+def install_path(shell: str) -> Path:
+    """Where this shell looks for completions, per shell.
+
+    bash and fish both read a user directory with no configuration at all.
+    zsh reads $fpath, which is why its answer needs a line in .zshrc — there is
+    no user directory zsh searches by default.
+    """
+    home = Path.home()
+    if shell == "bash":
+        xdg = os.environ.get("XDG_DATA_HOME") or home / ".local" / "share"
+        return Path(xdg) / "bash-completion" / "completions" / "runon"
+    if shell == "zsh":
+        site = _writable_zsh_site_dir()
+        return (site / "_runon") if site else (home / ".zsh" / "completions" / "_runon")
+    return home / ".config" / "fish" / "completions" / "runon.fish"
+
+
+#: Directories already on zsh's default $fpath. A completion dropped in one of
+#: these needs no line in anybody's .zshrc.
+ZSH_SITE_DIRS = (
+    "/opt/homebrew/share/zsh/site-functions",
+    "/usr/local/share/zsh/site-functions",
+    "/usr/share/zsh/site-functions",
+    "/usr/share/zsh/vendor-completions",
+)
+
+
+def _writable_zsh_site_dir() -> Path | None:
+    for candidate in ZSH_SITE_DIRS:
+        path = Path(candidate)
+        if path.is_dir() and os.access(path, os.W_OK):
+            return path
+    return None
+
+
+def install(shell: str) -> tuple[Path, str]:
+    """Writes the completion where `shell` will find it.
+
+    Returns the path and whatever still has to be done by hand — empty when
+    nothing does.
+    """
+    path = install_path(shell)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(script(shell), encoding="utf-8")
+
+    if shell == "zsh":
+        if str(path.parent) in ZSH_SITE_DIRS:
+            # Already on zsh's default fpath, so there is nothing to configure.
+            return path, "Start a new shell to pick it up."
+        return path, (
+            f"Add this to ~/.zshrc, above `compinit`:\n"
+            f"    fpath=({path.parent} $fpath)\n"
+            "Then start a new shell, or run: compinit"
+        )
+    if shell == "bash":
+        return path, "Start a new shell to pick it up."
+    return path, ""
