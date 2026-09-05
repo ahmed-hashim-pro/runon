@@ -53,17 +53,23 @@ class Transport(Protocol):
 
 
 def _env_prefix(env: dict[str, str] | None) -> str:
-    """Renders env vars as an inline assignment prefix.
+    """Renders env vars as an `export` statement for the remote shell.
 
     Passing them through ssh's own SendEnv would need matching AcceptEnv on
     every target, which is a server-side change runon has no business
     requiring.
+
+    `export`, not a bare `A=1 ` prefix. An assignment in front of a command
+    applies to that one command, and the command runon sends starts with `cd`:
+    `A=1 cd dir && ./main.sh` sets A for the `cd` and the program never sees
+    it. Nothing reached a remote program until this said export.
     """
     if not env:
         return ""
     import shlex
 
-    return " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env.items())) + " "
+    assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env.items()))
+    return f"export {assignments}; "
 
 
 class LocalTransport:
