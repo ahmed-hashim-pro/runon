@@ -11,6 +11,7 @@ import argparse
 import getpass
 import os
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 from . import __version__, asking, config, inventory, runner, watch
@@ -201,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
+    if args.scope != "completion":
+        # Not for `runon completion`: someone running that is managing it
+        # themselves, and doing it for them first would be confusing.
+        _install_completion_once()
+
     # These four run before the workspace is resolved, because a config file
     # that will not parse must not take out the two commands that repair it.
     if args.scope == "init":
@@ -377,6 +383,46 @@ def _ask_how_it_authenticates() -> tuple[str | None, str | None]:
         print("  not a choice")
 
 
+def _install_completion_once() -> None:
+    """Set completion up on the first run, since installing cannot.
+
+    A wheel has no way to run anything after `pip install`, and the data files
+    that would place a completion land inside the venv for a venv or pipx
+    install, where no shell reads them. First run is the earliest moment
+    anything of ours executes.
+
+    Once, tracked by a marker, and never on a second attempt after a failure:
+    re-deciding this on every command would be a surprise every time somebody
+    changed their shell.
+    """
+    from . import completion
+
+    if os.environ.get("RUNON_NO_COMPLETION") == "1":
+        return
+    marker = config.home() / "completion-installed"
+    if marker.exists():
+        return
+
+    shell = completion.default_shell()
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        if shell is None:
+            marker.write_text("no shell detected\n", encoding="utf-8")
+            return
+        path, remaining = completion.install(shell, user_only=True)
+        marker.write_text(f"{path}\n", encoding="utf-8")
+    except OSError as exc:
+        # Nothing here is worth failing a run over. Record the attempt so it
+        # is not retried on every command from now on.
+        with suppress(OSError):
+            marker.write_text(f"failed: {exc}\n", encoding="utf-8")
+        return
+
+    print(f"runon: {shell} completion installed at {path}", file=sys.stderr)
+    if remaining:
+        print(f"runon: {remaining.splitlines()[0]}", file=sys.stderr)
+
+
 def _completion(args) -> int:
     from . import completion
 
@@ -392,6 +438,8 @@ def _completion(args) -> int:
         return 0
 
     path, remaining = completion.install(shell)
+    with suppress(OSError):
+        (config.home() / "completion-installed").write_text(f"{path}\n", encoding="utf-8")
     print(f"  wrote {path}")
     if remaining:
         print(f"\n{remaining}")

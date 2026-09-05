@@ -105,8 +105,10 @@ jobs:
       - name: Completion installs itself where bash looks
         env:
           SHELL: /bin/bash
+          RUNON_HOME: /tmp/firstrun
         run: |
-          /tmp/clean/bin/runon completion --install
+          # the first command sets it up; nothing is typed to make that happen
+          /tmp/clean/bin/runon list programs > /dev/null
           test -f "$HOME/.local/share/bash-completion/completions/runon"
           cat > /tmp/loaded.sh <<'EOF'
           source "$HOME/.local/share/bash-completion/completions/runon"

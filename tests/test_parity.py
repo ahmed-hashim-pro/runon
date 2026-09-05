@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import tty
 
-from runon import cli, completion, runner, watch
+from runon import cli, completion, config, runner, watch
 from runon.completion import script
 from runon.doctor import Check, report, run_checks
 from runon.errors import ProgramInvalid
@@ -423,3 +423,102 @@ class TestInstallingCompletion:
         assert code == 0
         assert "_runon()" in out
         assert not (tmp_path / "home").exists()
+
+
+class TestFirstRunInstallsCompletion:
+    """`pip install` cannot register a completion, so the first run does.
+
+    A wheel has no post-install hook, and the data files that would place one
+    land inside the venv for a venv or pipx install, where no shell reads them.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _shell(self, monkeypatch):
+        monkeypatch.setenv("SHELL", "/bin/bash")
+        monkeypatch.delenv("RUNON_NO_COMPLETION", raising=False)
+
+    def _home(self, tmp_path):
+        return tmp_path / "home"
+
+    def test_the_first_command_installs_it(self, tmp_path, capsys):
+        from test_cli import run
+
+        code, _, err = run(["list", "programs"], tmp_path, capsys)
+
+        assert code == 0
+        assert (
+            self._home(tmp_path) / ".local/share/bash-completion/completions/runon"
+        ).is_file()
+        assert "completion installed" in err
+
+    def test_it_happens_once(self, tmp_path, capsys):
+        from test_cli import run
+
+        run(["list", "programs"], tmp_path, capsys)
+        installed = self._home(tmp_path) / ".local/share/bash-completion/completions/runon"
+        installed.unlink()
+
+        _, _, err = run(["list", "programs"], tmp_path, capsys)
+
+        # deciding this again on every command would be a surprise every time
+        assert not installed.exists()
+        assert "completion installed" not in err
+
+    def test_it_can_be_turned_off(self, tmp_path, monkeypatch, capsys):
+        from test_cli import run
+
+        monkeypatch.setenv("RUNON_NO_COMPLETION", "1")
+        run(["list", "programs"], tmp_path, capsys)
+
+        assert not (self._home(tmp_path) / ".local").exists()
+
+    def test_an_unknown_shell_installs_nothing_and_says_nothing(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from test_cli import run
+
+        monkeypatch.setenv("SHELL", "/bin/nonesuch")
+        _, _, err = run(["list", "programs"], tmp_path, capsys)
+
+        assert "completion" not in err
+        assert (config.home() / "completion-installed").is_file()
+
+    def test_running_the_completion_command_does_not_trigger_it(self, tmp_path, capsys):
+        from test_cli import run
+
+        # someone managing it themselves should not have it done for them first
+        _, _, err = run(["completion", "bash"], tmp_path, capsys)
+
+        assert "completion installed" not in err
+
+    def test_a_failure_to_write_never_fails_the_run(self, tmp_path, monkeypatch, capsys):
+        from test_cli import run
+
+        monkeypatch.setattr(
+            completion, "install", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only"))
+        )
+
+        code, _, _ = run(["list", "programs"], tmp_path, capsys)
+
+        assert code == 0
+
+    def test_the_automatic_path_never_writes_outside_your_home(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """This wrote into /opt/homebrew before the tests isolated HOME.
+
+        A shared system directory is a fine place to put a completion when
+        somebody asked for one, and never a fine place for a side effect of
+        `runon list programs`.
+        """
+        from test_cli import run
+
+        site = tmp_path / "site-functions"
+        site.mkdir()
+        monkeypatch.setattr(completion, "ZSH_SITE_DIRS", (str(site),))
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+
+        run(["list", "programs"], tmp_path, capsys)
+
+        assert list(site.iterdir()) == []
+        assert (self._home(tmp_path) / ".zsh/completions/_runon").is_file()
