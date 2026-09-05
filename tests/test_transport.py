@@ -35,11 +35,10 @@ class TestSSHArgv:
 
 class TestEnvPrefix:
     def test_values_are_quoted(self):
-        assert _env_prefix({"A": "b c"}) == "A='b c' "
+        assert _env_prefix({"A": "b c"}) == "export A='b c'; "
 
     def test_a_value_cannot_smuggle_a_command(self):
-        prefix = _env_prefix({"A": "x; rm -rf /"})
-        assert prefix == "A='x; rm -rf /' "
+        assert _env_prefix({"A": "x; rm -rf /"}) == "export A='x; rm -rf /'; "
 
     def test_empty_env_adds_nothing(self):
         assert _env_prefix(None) == ""
@@ -47,7 +46,32 @@ class TestEnvPrefix:
 
     def test_ordering_is_stable(self):
         # so a failing command is reproducible from the log
-        assert _env_prefix({"B": "2", "A": "1"}) == "A=1 B=2 "
+        assert _env_prefix({"B": "2", "A": "1"}) == "export A=1 B=2; "
+
+    def test_it_exports_rather_than_prefixing_one_command(self):
+        """`A=1 cd dir && ./main.sh` sets A for the cd, and nothing else.
+
+        The command runon sends starts with cd, so a bare assignment prefix
+        meant no variable ever reached a remote program — not the parameters,
+        not the prompts, not RUNON_HOST.
+        """
+        assert _env_prefix({"A": "1"}).startswith("export ")
+
+    def test_the_variables_actually_reach_a_program_past_a_cd(self, tmp_path):
+        """Run it, rather than asserting on the string that was wrong before."""
+        import subprocess
+
+        (tmp_path / "p").mkdir()
+        entry = tmp_path / "p" / "main.sh"
+        entry.write_text('#!/bin/sh\necho "saw=${A:-unset}"\n', encoding="utf-8")
+        entry.chmod(0o755)
+
+        command = _env_prefix({"A": "1"}) + "cd p && ./main.sh"
+        out = subprocess.run(
+            ["/bin/sh", "-c", command], cwd=tmp_path, capture_output=True, text=True
+        )
+
+        assert out.stdout.strip() == "saw=1"
 
 
 class TestSFTPHint:
