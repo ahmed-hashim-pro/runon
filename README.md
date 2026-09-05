@@ -457,8 +457,17 @@ DESTRUCTIVE: Restarts production and drops in-flight requests.
 Run deploy anyway? [y/N]:
 ```
 
-With nobody watching it **refuses** rather than agreeing on your behalf. A
-scheduled run says it means it with `RUNON_ASSUME_YES=1`.
+With nobody watching it **refuses** rather than agreeing on your behalf. Say
+you mean it with `--yes` (or `-y`), or `RUNON_ASSUME_YES=1` for a whole
+scheduled environment:
+
+```bash
+runon group --group production run-program migrate --yes
+```
+
+The warning is printed either way, including when `--yes` skips the question — a
+log that does not say what it agreed to cannot tell you why the database is
+gone.
 
 **`prompts.toml`** — what it asks for:
 
@@ -489,8 +498,8 @@ Asked **once** for a whole group, not once per host.
 ### The same command, scheduled
 
 ```bash
-RUNON_PROMPT_BRANCH=hotfix RUNON_PROMPT_TOKEN=… RUNON_ASSUME_YES=1 \
-  runon group --group production run-program deploy
+RUNON_PROMPT_BRANCH=hotfix RUNON_PROMPT_TOKEN=… \
+  runon group --group production run-program deploy --yes
 ```
 
 Precedence is **environment → what you type → the declared default**. The
@@ -566,6 +575,7 @@ runon doctor                        check this machine has what runon needs
 runon completion bash|zsh|fish      print a completion script
 
 runon local run-program  [P] [args...]     (or --program P)
+    -y/--yes   agree to a destructive program in advance
 runon local run-layout   [--layout L]
 
 runon host  [--host H]  [flags] <verb> [P] [args...]

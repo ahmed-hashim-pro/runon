@@ -129,6 +129,12 @@ def _add_program_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--verbose", "-v", action="store_true", help="show output from successes")
     parser.add_argument("--dry-run", action="store_true", help="print what would happen")
     parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="agree in advance to a destructive program's confirmation",
+    )
+    parser.add_argument(
         "args", nargs="*", help="program name, then arguments passed through to main.sh"
     )
 
@@ -437,27 +443,35 @@ def _prepare(program, args) -> dict[str, str]:
         print("  this program is marked experimental", file=sys.stderr)
 
     if meta.destructive and not args.dry_run:
-        _confirm_destructive(program, meta)
+        _confirm_destructive(program, meta, args)
 
     return asking.collect(program.prompts())
 
 
-def _confirm_destructive(program, meta) -> None:
+def _confirm_destructive(program, meta, args) -> None:
     """A program that says it is hard to undo has to be agreed to.
 
-    Refused rather than warned about when nobody is there: a scheduled run that
-    silently agrees on your behalf is the thing the flag exists to prevent.
+    The warning is printed either way, including when --yes skips the question:
+    a log that does not say what it agreed to is a log that cannot tell you why
+    the database is gone.
+
+    Refused rather than assumed when nobody is there and nothing said otherwise
+    — a scheduled run silently agreeing on your behalf is the thing the flag
+    exists to prevent.
     """
     message = meta.confirm_message or "This program makes changes that may be hard to undo."
     print(f"\nDESTRUCTIVE: {message}", file=sys.stderr)
 
+    if getattr(args, "yes", False):
+        print("proceeding: --yes", file=sys.stderr)
+        return
     if os.environ.get("RUNON_ASSUME_YES") == "1":
         print("proceeding: RUNON_ASSUME_YES=1", file=sys.stderr)
         return
     if not sys.stdin.isatty():
         raise RunonError(
             f"{program.name} is marked destructive and there is no terminal to confirm on.\n"
-            "Set RUNON_ASSUME_YES=1 if you mean it."
+            "Pass --yes, or set RUNON_ASSUME_YES=1, if you mean it."
         )
     if _read(f"Run {program.name} anyway? [y/N]: ").lower() not in {"y", "yes"}:
         raise Cancelled

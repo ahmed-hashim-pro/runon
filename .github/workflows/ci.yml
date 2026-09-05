@@ -160,6 +160,12 @@ jobs:
           out=$(RUNON_ASSUME_YES=1 /tmp/clean/bin/runon local run-program asker -v < /dev/null)
           echo "$out" | grep -q "b=main"
 
+          # --yes is the same agreement, on the command line
+          out=$(/tmp/clean/bin/runon local run-program asker -v --yes < /dev/null 2>&1)
+          echo "$out" | grep -q "b=main"
+          # the warning is still printed, or the log cannot say what it agreed to
+          echo "$out" | grep -q "DESTRUCTIVE"
+
           # the environment beats the default
           out=$(RUNON_ASSUME_YES=1 RUNON_PROMPT_BRANCH=hotfix \
                 /tmp/clean/bin/runon local run-program asker -v < /dev/null)
