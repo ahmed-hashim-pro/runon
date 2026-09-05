@@ -27,8 +27,49 @@ def test_copy_program_ships_the_functions_library_too(workspace):
     destinations = [remote for _, _, remote in fake.copies]
     # a program that sources a helper is broken without it, and finding that out
     # on the target is the worst place to find out
-    assert runner.remote_program_dir("hello-world") in destinations
-    assert any(d.endswith("/functions") for d in destinations)
+    assert f"{runner.REMOTE_PROGRAMS}/" in destinations
+    assert f"{runner.REMOTE_ROOT}/" in destinations
+
+
+def test_it_makes_the_directory_before_copying_into_it(workspace):
+    """scp cannot create the directory it copies into.
+
+    Reported from a real host: `scp: /home/…/.runon/programs/hello-world: No
+    such file or directory`, because nothing had ever made ~/.runon/programs.
+    """
+    fake = FakeTransport()
+
+    runner.copy_program(fake, WEB1, workspace, workspace.program("hello-world"))
+
+    assert fake.calls[0][1] == f"mkdir -p {runner.REMOTE_PROGRAMS}"
+
+
+def test_it_copies_into_the_parent_so_a_second_copy_does_not_nest(workspace):
+    """`scp -r src dest` creates dest, then puts src *inside* it.
+
+    Copying to the final path works once and produces
+    programs/hello-world/hello-world every time after.
+    """
+    fake = FakeTransport()
+
+    runner.copy_program(fake, WEB1, workspace, workspace.program("hello-world"))
+
+    program_copy = next(r for _, _, r in fake.copies if "programs" in r)
+    assert program_copy.endswith("/programs/")
+    assert "hello-world" not in program_copy
+
+
+def test_a_target_it_cannot_prepare_is_not_then_copied_to(workspace):
+    class RefusesMkdir(FakeTransport):
+        def run(self, host, command, *, env=None):
+            return Result(host.name, command, 1, "", "read-only file system")
+
+    fake = RefusesMkdir()
+    results = runner.copy_program(fake, WEB1, workspace, workspace.program("hello-world"))
+
+    assert fake.copies == []
+    assert not results[0].ok
+    assert "could not create" in results[0].stderr
 
 
 def test_run_program_executes_the_entry_point(workspace):
