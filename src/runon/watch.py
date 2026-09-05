@@ -31,9 +31,18 @@ def session_name(label: str) -> str:
     return f"{SESSION_PREFIX}-{cleaned}"[:60]
 
 
-def build_commands(hosts: list[Host], ssh_argv: list[str], remote_command: str) -> list[list[str]]:
-    """One full ssh argv per host, for tmux to run in its own pane."""
-    return [[*ssh_argv, host.ssh_target, remote_command] for host in hosts]
+def build_commands(
+    hosts: list[Host], ssh_argv: list[str], remote_commands: list[str]
+) -> list[list[str]]:
+    """One full ssh argv per host, for tmux to run in its own pane.
+
+    A command per host rather than one shared by all of them: a pane that
+    cannot be told which machine it is on cannot export RUNON_HOST.
+    """
+    return [
+        [*ssh_argv, host.ssh_target, command]
+        for host, command in zip(hosts, remote_commands, strict=True)
+    ]
 
 
 def open_panes(

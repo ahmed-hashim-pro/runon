@@ -64,7 +64,7 @@ class Raw(str):
     """
 
 
-def _env_prefix(env: dict[str, str] | None) -> str:
+def env_prefix(env: dict[str, str] | None) -> str:
     """Renders env vars as an `export` statement for the remote shell.
 
     Passing them through ssh's own SendEnv would need matching AcceptEnv on
@@ -197,7 +197,7 @@ class SSHTransport:
 
     def run(self, host: Host, command: str, *, env: dict[str, str] | None = None) -> Result:
         password = self.password_for(host)
-        argv = [*self._base(host, "ssh", password), host.ssh_target, _env_prefix(env) + command]
+        argv = [*self._base(host, "ssh", password), host.ssh_target, env_prefix(env) + command]
         return self._invoke(argv, host, command, password)
 
     def _invoke(

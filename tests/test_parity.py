@@ -78,10 +78,38 @@ class TestWatch:
     """One pane per host, which is what Yakuake was doing in the original."""
 
     def test_a_command_per_host(self):
-        commands = watch.build_commands(HOSTS, SSHTransport().ssh_argv(), "echo hi")
+        commands = watch.build_commands(
+            HOSTS, SSHTransport().ssh_argv(), ["on web-1", "on web-2"]
+        )
 
         assert len(commands) == 2
-        assert commands[0][-2:] == ["web-1.example.com", "echo hi"]
+        assert commands[0][-2:] == ["web-1.example.com", "on web-1"]
+        assert commands[1][-1] == "on web-2"
+
+    def test_each_pane_is_told_which_host_it_is_on(self, workspace):
+        """A shared command could not say, so RUNON_HOST used to be stripped.
+
+        A watched program then saw an empty RUNON_HOST while the same program
+        on every other path saw the right one.
+        """
+        commands = [
+            runner.watch_command(workspace, workspace.program("hello-world"), host)
+            for host in HOSTS
+        ]
+
+        assert "RUNON_HOST=web-1" in commands[0]
+        assert "RUNON_HOST=web-2" in commands[1]
+
+    def test_the_functions_path_is_not_quoted_into_a_literal(self, workspace):
+        """A pane read `"$HOME/.runon"/functions`, quotes and all.
+
+        watch_command had its own copy of the environment builder, which knew
+        nothing about values the remote shell has to expand.
+        """
+        command = runner.watch_command(workspace, workspace.program("hello-world"), HOSTS[0])
+
+        assert 'RUNON_FUNCTIONS="$HOME/.runon"/functions' in command
+        assert "'\"$HOME" not in command
 
     def test_a_terminal_is_forced(self):
         # without -t a program that prompts or colours output behaves
@@ -107,7 +135,7 @@ class TestWatch:
         calls = []
         watch.open_panes(
             HOSTS,
-            watch.build_commands(HOSTS, ["ssh"], "echo hi"),
+            watch.build_commands(HOSTS, ["ssh"], ["echo hi", "echo hi"]),
             label="t",
             attach=False,
             runner=lambda argv, **kw: calls.append(argv),
@@ -504,6 +532,36 @@ class TestFirstRunInstallsCompletion:
         code, _, _ = run(["list", "programs"], tmp_path, capsys)
 
         assert code == 0
+
+    def test_an_upgrade_refreshes_a_stale_completion(self, tmp_path, monkeypatch, capsys):
+        """A marker that says only "done" never notices a new command.
+
+        0.13.0 added nothing to the verb list, so the file from 0.12.0 happened
+        to still be right. The next release that adds one would have shipped a
+        completion nobody's shell ever loaded.
+        """
+        from test_cli import run
+
+        installed = self._home(tmp_path) / ".local/share/bash-completion/completions/runon"
+        run(["list", "programs"], tmp_path, capsys)
+        installed.write_text("stale from an older runon\n", encoding="utf-8")
+
+        monkeypatch.setattr(cli, "__version__", "99.0.0")
+        run(["list", "programs"], tmp_path, capsys)
+
+        assert "stale" not in installed.read_text(encoding="utf-8")
+        assert "_runon()" in installed.read_text(encoding="utf-8")
+
+    def test_the_same_version_does_not_rewrite_it(self, tmp_path, capsys):
+        from test_cli import run
+
+        installed = self._home(tmp_path) / ".local/share/bash-completion/completions/runon"
+        run(["list", "programs"], tmp_path, capsys)
+        installed.write_text("left alone\n", encoding="utf-8")
+
+        run(["list", "programs"], tmp_path, capsys)
+
+        assert installed.read_text(encoding="utf-8") == "left alone\n"
 
     def test_the_automatic_path_never_writes_outside_your_home(
         self, tmp_path, monkeypatch, capsys

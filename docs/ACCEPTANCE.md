@@ -20,14 +20,33 @@ file. List every path you created at the end.
 
 ## 1. Install
 
+First find out what you have, and whether the system python can even run it:
+
 ```bash
-python3 -m pip install -U --no-cache-dir runon || pipx install runon
+command -v runon && runon --version
+python3 -V                      # runon needs 3.11+
+pipx --version 2>/dev/null || echo "no pipx"
+```
+
+Then upgrade with whichever applies. **Check the version afterwards** — several
+of these exit 0 having changed nothing:
+
+```bash
+pipx upgrade runon --pip-args="--no-cache-dir" || pipx install --force runon
+# no pipx, and python3 is 3.11 or newer:
+python3 -m pip install -U --no-cache-dir runon
+# no pipx, and python3 is older than 3.11 — pip will refuse, so get a newer one:
+#   sudo apt install python3.11-venv && python3.11 -m venv ~/.venvs/runon
+#   ~/.venvs/runon/bin/pip install --no-cache-dir runon
+
 runon --version
 ```
 
 `--no-cache-dir` matters: PyPI's CDN has repeatedly served a stale version.
-Report the version. **It must be 0.13.0 or newer**; if it is older, say so and
-stop — everything after this is testing the wrong build.
+
+**It must be 0.13.1 or newer.** If it is older, say so and stop — everything
+after this tests the wrong build. If you could not upgrade at all, say that
+too; do not test whatever happened to be installed and report it as a pass.
 
 ## 2. First run creates a workspace and installs completion
 
