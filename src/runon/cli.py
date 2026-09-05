@@ -107,6 +107,13 @@ def _add_auth_args(parser: argparse.ArgumentParser) -> None:
         help="run in tmux, one pane per host, and attach so you can watch it",
     )
     parser.add_argument(
+        "--no-tmux",
+        "--headless",
+        dest="no_tmux",
+        action="store_true",
+        help="with --watch, run over ssh and collect output instead of opening panes",
+    )
+    parser.add_argument(
         "--persist",
         default=DEFAULT_PERSIST,
         metavar="DURATION",
@@ -484,6 +491,7 @@ def _local(workspace: Workspace, args) -> int:
         print(f"would run {program.name} on the local machine")
         return 0
     answers = _prepare(program, args)
+    config.record_recent(program.name)
     result = runner.run_program(
         transport, host, workspace, program, args=passthrough, remote=False, prompts=answers
     )
@@ -545,9 +553,14 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     # Once, not per host: a group of twenty is one intent, and being asked the
     # same question twenty times would be its own argument against the feature.
     answers = {} if args.verb == "copy-program" else _prepare(program, args)
+    config.record_recent(program.name)
 
-    if getattr(args, "watch", False):
+    if getattr(args, "watch", False) and not getattr(args, "no_tmux", False):
         return _watch(transport, hosts, workspace, program, passthrough, answers, args)
+    if getattr(args, "no_tmux", False) and getattr(args, "watch", False):
+        # Asked for both: the point of --headless is that the same command
+        # works where there is no terminal to open panes in, so it wins.
+        print("running without panes: --no-tmux", file=sys.stderr)
 
     def work(host) -> Result | list[Result]:
         if args.verb == "copy-program":

@@ -73,13 +73,54 @@ def set_workspace(root: Path) -> Path | None:
         previous = None
     resolved = root.expanduser().resolve()
 
+    _write({**read_or_empty(), "workspace": str(resolved)})
+    return Path(previous) if previous else None
+
+
+def read_or_empty() -> dict:
+    try:
+        return read()
+    except ConfigError:
+        return {}
+
+
+def _write(data: dict) -> None:
+    """Rewrites the config from a dict.
+
+    Safe to serialise wholesale, unlike the inventory: this file is written by
+    runon and holds a handful of scalars, so there are no comments to lose.
+    """
     file = path()
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(
-        "# Written by `runon init`. Edit to point at a different workspace.\n"
-        # A TOML basic string escapes the way a JSON string does, and a path
-        # with a quote or a backslash in it would otherwise write a broken file.
-        f"workspace = {json.dumps(str(resolved))}\n",
-        encoding="utf-8",
-    )
-    return Path(previous) if previous else None
+    lines = ["# Written by runon. Edit to point at a different workspace."]
+    for key, value in sorted(data.items()):
+        if isinstance(value, list):
+            lines.append(f"{key} = [{', '.join(json.dumps(str(v)) for v in value)}]")
+        else:
+            # A TOML basic string escapes the way a JSON one does, so a path
+            # with a quote or a backslash cannot break the file.
+            lines.append(f"{key} = {json.dumps(str(value))}")
+    file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+RECENT_KEY = "recent_programs"
+RECENT_MAX = 10
+
+
+def recent_programs() -> list[str]:
+    value = read().get(RECENT_KEY)
+    return [str(v) for v in value] if isinstance(value, list) else []
+
+
+def record_recent(name: str) -> None:
+    """Moves `name` to the front of the recents list.
+
+    Best-effort throughout: a config that cannot be written must not stop a
+    program from running, because remembering what you ran is a convenience and
+    running it is the job.
+    """
+    try:
+        recent = [name] + [r for r in recent_programs() if r != name]
+        _write({**read(), RECENT_KEY: recent[:RECENT_MAX]})
+    except (OSError, ConfigError):
+        pass
