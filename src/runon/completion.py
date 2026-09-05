@@ -101,6 +101,18 @@ def script(shell: str) -> str:
     return SCRIPTS[shell]
 
 
+#: Said after every install, because the reason is not obvious.
+#:
+#: bash-completion remembers that a command had no completion. Press tab once
+#: before this file exists — which is exactly what someone does after
+#: installing — and that shell keeps completing filenames for `runon` no matter
+#: what appears on disk afterwards. zsh caches its own dump the same way.
+NEW_SHELL = (
+    "Open a new shell to pick it up — this one has already decided runon "
+    "has no completion."
+)
+
+
 def default_shell() -> str | None:
     """The shell that launched us, from $SHELL.
 
@@ -164,12 +176,12 @@ def install(shell: str, *, user_only: bool = False) -> tuple[Path, str]:
     if shell == "zsh":
         if str(path.parent) in ZSH_SITE_DIRS:
             # Already on zsh's default fpath, so there is nothing to configure.
-            return path, "Start a new shell to pick it up."
+            return path, NEW_SHELL
         return path, (
             f"Add this to ~/.zshrc, above `compinit`:\n"
             f"    fpath=({path.parent} $fpath)\n"
             "Then start a new shell, or run: compinit"
         )
     if shell == "bash":
-        return path, "Start a new shell to pick it up."
+        return path, NEW_SHELL
     return path, ""
