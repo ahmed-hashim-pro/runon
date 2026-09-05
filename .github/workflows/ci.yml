@@ -334,18 +334,43 @@ jobs:
       # checks the argv and the env it builds, and CI only ever used a key. A
       # real 8.2 client with a terminal attached prompted the operator instead
       # of reading the stored password, and nothing here could have seen that.
-      - name: A stored password authenticates against a real sshd
+      #
+      # A dedicated sshd on a high port rather than the machine's own: the
+      # runner's sshd is hardened in ways that differ between images, and a
+      # test that edits it is testing the image as much as runon.
+      - name: A second sshd that accepts a password
         run: |
           sudo useradd -m -s /bin/bash runontest
           echo 'runontest:not-a-real-password' | sudo chpasswd
-          echo 'PasswordAuthentication yes' | sudo tee /etc/ssh/sshd_config.d/runon-test.conf
-          sudo systemctl reload ssh || sudo service ssh reload
+          sudo mkdir -p /run/sshd
+          sudo ssh-keygen -q -t ed25519 -N "" -f /tmp/hostkey
+          sudo tee /tmp/sshd_test.conf >/dev/null <<'EOF'
+          Port 2222
+          HostKey /tmp/hostkey
+          PasswordAuthentication yes
+          PubkeyAuthentication no
+          KbdInteractiveAuthentication no
+          UsePAM yes
+          PidFile /tmp/sshd_test.pid
+          EOF
+          sudo /usr/sbin/sshd -f /tmp/sshd_test.conf
+          sleep 1
+          ss -ltnp | grep -q ':2222' || { echo "sshd did not start"; sudo /usr/sbin/sshd -f /tmp/sshd_test.conf -d -T; exit 1; }
+          echo "listening on 2222"
 
+      - name: A stored password authenticates against it
+        run: |
           printf '%s' 'not-a-real-password' | \
-            runon add-host pw --address 127.0.0.1 --user runontest --password-stdin
-          out=$(runon host --host pw copy-run-program hello-world --verbose < /dev/null)
-          echo "$out"
-          echo "$out" | grep -q "t=90 b=main"
+            runon add-host pw --address 127.0.0.1 --port 2222 --user runontest --password-stdin
+          # never inside $( ) under `set -e`: a failure would abort the step
+          # before the output is printed, which is the output you need
+          set +e
+          runon host --host pw copy-run-program hello-world --verbose < /dev/null | tee /tmp/pw.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit=$code"
+          test "$code" -eq 0
+          grep -q "t=90 b=main" /tmp/pw.log
 
       # The same run with a terminal attached. Before OpenSSH 8.4 the askpass
       # helper is used only when ssh cannot open /dev/tty, so this is the case
@@ -353,7 +378,7 @@ jobs:
       - name: And with a terminal attached
         run: |
           cat > /tmp/withtty.py <<'EOF'
-          import os, pty, sys, time
+          import os, pty, sys
           pid, fd = pty.fork()
           if pid == 0:
               os.execvp("runon", ["runon", "host", "--host", "pw",
