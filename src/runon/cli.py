@@ -25,6 +25,13 @@ from .transport import DEFAULT_PERSIST, LocalTransport, Result, SSHTransport
 
 REMOTE_VERBS = ("copy", "copy-program", "run-program", "copy-run-program")
 
+#: Exit code for "you were asked, and you said no".
+#:
+#: runon exits 0 only when it ran what you asked for. Declining a destructive
+#: program, or walking away from a menu, means nothing ran — and a script that
+#: cannot tell that from success will report a rollout it never did.
+CANCELLED = 130
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -196,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         return _dispatch(args)
     except Cancelled:
         print("\ncancelled", file=sys.stderr)
-        return 0
+        return CANCELLED
     except RunonError as exc:
         # Expected failures print what went wrong, not where in our code it did.
         print(f"runon: {exc}", file=sys.stderr)
@@ -614,7 +621,7 @@ def _local(workspace: Workspace, args) -> int:
         else:
             chosen = choose(layouts)
         if chosen is None:
-            return 0
+            return CANCELLED
         script = workspace.layouts_path / f"{chosen.name}.sh"
         result = transport.run(host, f"sh {script}")
         return emit([result], verbose=True)
@@ -622,7 +629,7 @@ def _local(workspace: Workspace, args) -> int:
     name, passthrough = _program_and_args(args)
     program = _resolve_program(workspace, name)
     if program is None:
-        return 0
+        return CANCELLED
     if args.dry_run:
         print(f"would run {program.name} on the local machine")
         return 0
@@ -649,8 +656,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     if args.scope == "host":
         name = args.host or choose_name("host", sorted(inv.hosts), offer_new=True)
         if name is None:
-            # Nothing was chosen, which is a decision rather than a failure.
-            return 0
+            return CANCELLED
         if name == ADD_NEW:
             name, inv = _add_host_inline(workspace)
         hosts = [inv.host(name)]
@@ -658,7 +664,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     else:
         name = args.group or choose_name("group", sorted(inv.groups))
         if name is None:
-            return 0
+            return CANCELLED
         hosts = inv.group(name)
         parallel = max(1, args.parallel)
     if not hosts:
@@ -681,7 +687,7 @@ def _remote(workspace: Workspace, inv: inventory.Inventory, args) -> int:
     name, passthrough = _program_and_args(args)
     program = _resolve_program(workspace, name)
     if program is None:
-        return 0
+        return CANCELLED
     if args.dry_run:
         _print_plan(hosts, f"{args.verb} {program.name}")
         return 0

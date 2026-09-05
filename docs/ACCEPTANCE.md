@@ -26,7 +26,7 @@ runon --version
 ```
 
 `--no-cache-dir` matters: PyPI's CDN has repeatedly served a stale version.
-Report the version. **It must be 0.12.3 or newer**; if it is older, say so and
+Report the version. **It must be 0.13.0 or newer**; if it is older, say so and
 stop — everything after this is testing the wrong build.
 
 ## 2. First run creates a workspace and installs completion
@@ -183,7 +183,8 @@ runon local run-program hello-world -v < /dev/null; echo "exit=$?"   # must refu
 runon local run-program hello-world -v --yes                          # must run
 ```
 
-Then interactively, without `--yes`, and answer `n` — it must cancel.
+Then interactively, without `--yes`, and answer `n`. It must cancel **and exit
+130** — a script has to be able to tell "you said no" from "it worked".
 
 ## 10. The picker
 

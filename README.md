@@ -28,6 +28,10 @@ db-1                     FAILED (1)
 Exit code is non-zero, because a rollout that worked on two of three machines
 has not worked.
 
+**runon exits 0 only when it ran what you asked for.** Declining a destructive
+program, or walking away from a menu, exits `130` — otherwise
+`runon … && notify "deployed"` announces a rollout that never happened.
+
 ## Quickstart
 
 Python 3.11+. No runtime dependencies.
@@ -604,7 +608,12 @@ runon group [--group G] [flags] <verb> [P] [-j N] [args...]
 Omit `--program`, `--host` or `--group` and you get a menu — on a terminal.
 With nothing to ask on (cron, CI, a pipe) runon refuses and names the choices,
 rather than reaching EOF, calling it "cancelled", and exiting 0 having done
-nothing:
+nothing.
+
+That holds **even when there is only one choice**. A single program today is
+the first of three tomorrow, and a scheduled command should not change meaning
+the day somebody adds the second one. On a terminal, one option is still
+selected for you without asking.
 
 ```
 $ runon group run-program --program deploy < /dev/null

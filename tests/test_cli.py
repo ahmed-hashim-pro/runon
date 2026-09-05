@@ -176,9 +176,9 @@ class TestPicker:
             self._programs(tmp_path), stream=tty("\n"), prompt_stream=io.StringIO()
         ) is None
 
-    def test_a_single_option_needs_no_prompt(self, tmp_path):
+    def test_a_single_option_needs_no_prompt_on_a_terminal(self, tmp_path):
         only = [Program("only", tmp_path / "only")]
-        assert choose(only, stream=io.StringIO(), prompt_stream=io.StringIO()).name == "only"
+        assert choose(only, stream=tty(), prompt_stream=io.StringIO()).name == "only"
 
     def test_rejects_out_of_range_then_accepts(self, tmp_path):
         chosen = choose(
@@ -323,13 +323,17 @@ class TestNoTerminal:
         assert code == 0
         assert "second" in out
 
-    def test_one_choice_still_needs_no_flag(self, tmp_path, capsys):
-        # deliberate: with a single program there is nothing to ask about
-        run(["init", str(tmp_path)], tmp_path, capsys)
-        code, out, _ = run(["local", "run-program", "--dry-run"], tmp_path, capsys)
+    def test_one_choice_is_still_not_chosen_for_a_script(self, tmp_path, capsys):
+        """A single program today is the first of three tomorrow.
 
-        assert code == 0
-        assert "hello-world" in out
+        Auto-selecting it with nobody watching means the same command starts
+        meaning something else the day a second program is added.
+        """
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        code, _, err = run(["local", "run-program", "--dry-run"], tmp_path, capsys)
+
+        assert code == 2
+        assert "--program" in err and "hello-world" in err
 
 
 class TestRemoteVerbs:

@@ -338,3 +338,65 @@ class TestListShowsMeta:
 
         assert "the real one" in out
         assert "stale comment" not in out
+
+
+class TestSayingNoIsNotSuccess:
+    """runon exits 0 only when it ran what you asked for.
+
+    Reported from a real machine: declining a destructive program exited 0, so
+    `runon ... && notify "deployed"` announced a rollout that never happened.
+    """
+
+    def _destructive(self, tmp_path, capsys):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        directory = tmp_path / "programs" / "wiper"
+        directory.mkdir()
+        entry = directory / "main.sh"
+        entry.write_text("#!/bin/sh\n# wipes\necho ran\n", encoding="utf-8")
+        entry.chmod(0o755)
+        (directory / "meta.toml").write_text("destructive = true\n", encoding="utf-8")
+        return tmp_path
+
+    def test_declining_a_destructive_program_is_not_zero(self, tmp_path, monkeypatch, capsys):
+        root = self._destructive(tmp_path, capsys)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli, "_read", lambda _: "n")
+
+        code, out, _ = run(["local", "run-program", "wiper", "-v"], root, capsys)
+
+        assert code == cli.CANCELLED
+        assert code != 0
+        assert "ran" not in out
+
+    def test_agreeing_still_is_zero(self, tmp_path, monkeypatch, capsys):
+        root = self._destructive(tmp_path, capsys)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli, "_read", lambda _: "y")
+
+        code, out, _ = run(["local", "run-program", "wiper", "-v"], root, capsys)
+
+        assert code == 0
+        assert "ran" in out
+
+    def test_walking_away_from_the_menu_is_not_zero_either(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        run(["init", str(tmp_path)], tmp_path, capsys)
+        monkeypatch.setattr(cli, "choose", lambda *a, **k: None)
+
+        code, out, _ = run(["local", "run-program"], tmp_path, capsys)
+
+        assert code == cli.CANCELLED
+        assert out == ""
+
+    def test_a_cancelled_host_choice_too(self, tmp_path, monkeypatch, inventory_file, capsys):
+        run(["init", str(inventory_file.parent)], tmp_path, capsys)
+        monkeypatch.setattr(cli, "choose_name", lambda *a, **k: None)
+
+        code, _, _ = run(
+            ["-C", str(inventory_file.parent), "host", "run-program", "hello-world"],
+            tmp_path,
+            capsys,
+        )
+
+        assert code == cli.CANCELLED
