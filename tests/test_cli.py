@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import tty
 
-from runon import cli
+from runon import cli, runner
 from runon.picker import choose
 from runon.program import Program
 from runon.report import emit
@@ -356,7 +356,10 @@ class TestRemoteVerbs:
 
         assert code == 0
         assert any("hello-world" in local for _, local, _ in fake.copies)
-        assert fake.calls == []
+        # the only thing it runs is the mkdir that scp needs
+        assert [command for _, command in fake.calls] == [
+            f"mkdir -p {runner.REMOTE_PROGRAMS}"
+        ]
 
     def test_run_program_runs_and_does_not_copy(self, fake, inventory_file, capsys):
         root = self._root(inventory_file, capsys)
@@ -398,7 +401,9 @@ class TestRemoteVerbs:
 
         assert code == 1
         # running a program that failed to arrive would run the previous version
-        assert transport.calls == []
+        assert [command for _, command in transport.calls] == [
+            f"mkdir -p {runner.REMOTE_PROGRAMS}"
+        ]
         assert "no space left" in out
 
     def test_a_group_reaches_every_host(self, fake, inventory_file, capsys):

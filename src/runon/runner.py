@@ -36,6 +36,15 @@ def remote_program_dir(program_name: str) -> str:
     return f"{REMOTE_ROOT}/programs/{program_name}"
 
 
+#: Where a program and the functions library are copied *into*.
+#:
+#: The parent, not the final path, because `scp -r src dest` means two
+#: different things depending on whether dest already exists: it creates dest
+#: the first time and puts src *inside* it every time after, so a second copy
+#: of hello-world lands in programs/hello-world/hello-world.
+REMOTE_PROGRAMS = f"{REMOTE_ROOT}/programs"
+
+
 def program_env(
     host: Host,
     program: Program,
@@ -78,9 +87,23 @@ def copy_program(
     Functions go too because a program that calls one is broken without it, and
     discovering that on the target is a worse place to find out.
     """
-    results = [transport.copy(host, program.path, remote_program_dir(program.name))]
+    # scp cannot create the directory it copies into, and on a host that has
+    # never been touched nothing has made ~/.runon/programs yet.
+    prepared = transport.run(host, f"mkdir -p {REMOTE_PROGRAMS}")
+    if not prepared.ok:
+        return [
+            Result(
+                host.name,
+                prepared.command,
+                prepared.exit_code,
+                prepared.stdout,
+                f"could not create {REMOTE_PROGRAMS} on the target\n{prepared.stderr}",
+            )
+        ]
+
+    results = [transport.copy(host, program.path, f"{REMOTE_PROGRAMS}/")]
     if workspace.functions_path.is_dir():
-        results.append(transport.copy(host, workspace.functions_path, f"{REMOTE_ROOT}/functions"))
+        results.append(transport.copy(host, workspace.functions_path, f"{REMOTE_ROOT}/"))
     return results
 
 

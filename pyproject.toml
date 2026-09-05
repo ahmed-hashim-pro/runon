@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runon"
-version = "0.12.0"
+version = "0.12.1"
 description = "Keep your operational procedures as plain shell scripts, and run any of them identically on your laptop, one server, or a named group of servers."
 readme = "README.md"
 requires-python = ">=3.11"

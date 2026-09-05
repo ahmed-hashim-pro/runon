@@ -242,3 +242,61 @@ jobs:
           grep -q '/tmp/ops' "$HOME/.runon/config.toml"
           cd /
           /tmp/clean/bin/runon config | grep -q '/tmp/ops'
+
+  # Everything above drives the fake transport, which records what would have
+  # been copied and cannot tell you that scp would refuse it. A real host
+  # reported `scp: ~/.runon/programs/hello-world: No such file or directory`
+  # against a suite that was entirely green, so this one uses a real sshd.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: An sshd on localhost, reachable with a key
+        run: |
+          sudo systemctl start ssh || sudo service ssh start
+          ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no -o BatchMode=yes localhost 'echo reachable'
+
+      - name: Install
+        run: pip install -e .
+
+      - name: A program reaches a machine that has never been touched
+        run: |
+          runon init /tmp/ops
+          runon add-host localhost --address localhost --user "$USER" < /dev/null
+          runon host --host localhost copy-run-program hello-world --verbose
+
+      - name: It landed where the runner expects it
+        run: |
+          test -f ~/.runon/programs/hello-world/main.sh
+          test -f ~/.runon/functions/say.sh
+
+      # `scp -r src dest` creates dest the first time and copies src *inside*
+      # it every time after, so a second copy used to nest.
+      - name: Copying it again does not nest it
+        run: |
+          runon host --host localhost copy-run-program hello-world --verbose
+          test ! -e ~/.runon/programs/hello-world/hello-world
+          test -f ~/.runon/programs/hello-world/main.sh
+
+      - name: Program parameters and prompts survive the trip
+        run: |
+          printf 'threshold = 90\n' > /tmp/ops/programs/hello-world/params.toml
+          printf '[[prompt]]\nkey = "branch"\ndefault = "main"\n' \
+            > /tmp/ops/programs/hello-world/prompts.toml
+          printf '#!/bin/sh\n# reports\necho "t=$RUNON_PARAM_THRESHOLD b=$RUNON_PROMPT_BRANCH"\n' \
+            > /tmp/ops/programs/hello-world/main.sh
+          out=$(runon host --host localhost copy-run-program hello-world --verbose < /dev/null)
+          echo "$out"
+          echo "$out" | grep -q "t=90 b=main"
+
+      - name: A group of one real machine
+        run: |
+          printf '\n[groups.everything]\nhosts = ["localhost"]\n' >> /tmp/ops/inventory.toml
+          runon group --group everything run-program hello-world --verbose < /dev/null
