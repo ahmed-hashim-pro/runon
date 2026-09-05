@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import stat
+from contextlib import suppress
 from pathlib import Path
 
 from .errors import ConfigError
@@ -62,3 +63,43 @@ def _from_file(host: Host) -> str:
     if not value:
         raise ConfigError(f"{path} is empty, so there is no password to use.")
     return value
+
+
+def secrets_dir() -> Path:
+    """Where runon keeps passwords it was asked to store.
+
+    Under RUNON_HOME rather than the workspace: the workspace is committed, and
+    the entire design here is that a credential never goes near it.
+    """
+    from .config import home
+
+    directory = home() / "secrets"
+    directory.mkdir(parents=True, exist_ok=True)
+    # 0700 even if it already existed: an earlier umask, or a directory
+    # somebody made by hand, must not leave the files inside it reachable.
+    directory.chmod(0o700)
+    return directory
+
+
+def write_password_file(name: str, password: str) -> Path:
+    """Stores `password` for host `name`, readable only by this user.
+
+    Created with the mode already applied rather than chmod-ed afterwards:
+    open-then-chmod leaves a window in which the file exists and anybody can
+    read it, and that window is the whole thing being defended against.
+    """
+    if not password:
+        raise ConfigError("an empty password is not a password")
+
+    path = secrets_dir() / name
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            file.write(password)
+    except BaseException:
+        with suppress(OSError):
+            path.unlink()
+        raise
+    # An existing file keeps its old mode through O_CREAT, so set it anyway.
+    path.chmod(0o600)
+    return path

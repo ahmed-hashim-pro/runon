@@ -314,10 +314,26 @@ SSH user (blank for your own): deploy
 How does it authenticate?
    1. ssh key (nothing to store)
    2. password in an environment variable
-   3. password in a 0600 file
-Select 1-3 [1]: 2
-  Variable name: WEB9_PASS
+   3. password — type it now and runon will store it, 0600
+   4. password in a file I already have
+Select 1-4 [1]: 3
+  Password:
+  Again:
+  stored in ~/.runon/secrets/web-9  (0600)
   added web-9  (deploy@10.0.0.9)
+```
+
+Option 3 is the one to use. You type the password once, `runon` writes it to
+`~/.runon/secrets/<host>` — created `0600` inside a `0700` directory, outside
+the workspace, so it is never anywhere near something committed — and puts the
+*path* in `inventory.toml`. Asked twice, because a typo here does not fail now;
+it fails later as an ssh error on a machine you were not thinking about.
+
+For a script, pipe it instead — still never in `argv`, so never in `ps` or your
+shell history:
+
+```bash
+printf '%s' "$PASSWORD" | runon add-host db-1 -a 10.0.0.9 --password-stdin
 ```
 
 The same prompt is the last entry of the host menu, because the moment you
@@ -568,7 +584,7 @@ runon init [DIR]                    scaffold a workspace and remember it
                                     (default: ~/.runon/workspace)
 runon config [--workspace DIR]      show or change which one
 runon add-host [NAME] [-a ADDR] [-u USER] [--port N]
-               [--password-env VAR | --password-file PATH]
+               [--password-env VAR | --password-file PATH | --password-stdin]
 runon new-program <name>            create one from the template
 runon list programs|hosts|groups|layouts
 runon doctor                        check this machine has what runon needs
