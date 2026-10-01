@@ -828,14 +828,14 @@ would be offered to you as a program name.
   one.
 
 ## Tests
-126 tests. No servers, no SSH keys, no network.
+419 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"
 pytest
 ```
 
-CI runs them on Linux and macOS across Python 3.11–3.13, then executes the
+CI runs them on Linux and macOS across Python 3.10–3.13, then executes the
 quickstart above from an empty directory — so `init` producing something that
 actually runs is checked on every commit, rather than being discovered by the
 first user.
