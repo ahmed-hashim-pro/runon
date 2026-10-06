@@ -263,17 +263,21 @@ class TestPasswordPrompt:
 
         return argparse.Namespace(**{"ask_password": True, "dry_run": False, **kw})
 
+    @pytest.fixture
+    def at_a_terminal(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
     def test_not_asked_for_unless_requested(self):
         assert cli._password_for(self._args(ask_password=False), [object()]) is None
 
-    def test_asked_once_for_a_single_host(self, monkeypatch):
+    def test_asked_once_for_a_single_host(self, at_a_terminal, monkeypatch):
         calls = []
         monkeypatch.setattr(cli.getpass, "getpass", lambda *_: (calls.append(1), "pw")[1])
 
         assert cli._password_for(self._args(), [object()]) == "pw"
         assert len(calls) == 1
 
-    def test_asked_once_for_a_whole_group(self, monkeypatch, capsys):
+    def test_asked_once_for_a_whole_group(self, at_a_terminal, monkeypatch, capsys):
         calls = []
         monkeypatch.setattr(cli.getpass, "getpass", lambda *_: (calls.append(1), "pw")[1])
 
@@ -291,11 +295,43 @@ class TestPasswordPrompt:
         )
         assert cli._password_for(self._args(dry_run=True), [object()]) is None
 
-    def test_an_empty_password_is_refused(self, monkeypatch):
+    def test_an_empty_password_is_refused(self, at_a_terminal, monkeypatch):
         from runon.errors import RunonError
 
         monkeypatch.setattr(cli.getpass, "getpass", lambda *_: "")
-        with pytest.raises(RunonError):
+        with pytest.raises(RunonError, match="no password entered"):
+            cli._password_for(self._args(), [object()])
+
+    def test_no_terminal_is_refused_without_asking(self, monkeypatch):
+        """0.14.0 let getpass read EOF here and exited 1 with a traceback."""
+        from runon.errors import RunonError
+
+        monkeypatch.setattr(
+            cli.getpass, "getpass", lambda *_: pytest.fail("prompted with no terminal")
+        )
+        with pytest.raises(RunonError, match="no terminal to ask on"):
+            cli._password_for(self._args(), [object()])
+
+    def test_no_terminal_exits_cleanly(self, inventory_file, capsys):
+        root = inventory_file.parent
+        run(["init", str(root)], root, capsys)
+        code, _, err = run(
+            ["host", "--host", "web-1", "--ask-password", "run-program", "hello-world"],
+            root,
+            capsys,
+        )
+
+        assert code == 2
+        assert "Traceback" not in err
+        assert err.startswith("runon: --ask-password")
+        assert "password_env" in err
+
+    def test_end_of_input_at_the_prompt_is_a_cancel(self, at_a_terminal, monkeypatch):
+        def eof(*_):
+            raise EOFError
+
+        monkeypatch.setattr(cli.getpass, "getpass", eof)
+        with pytest.raises(cli.Cancelled):
             cli._password_for(self._args(), [object()])
 
     def test_the_flag_exists_on_both_remote_scopes(self):

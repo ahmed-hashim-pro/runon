@@ -823,6 +823,11 @@ def _password_for(args, hosts) -> str | None:
         return None
     if args.dry_run:
         return None
+    if not sys.stdin.isatty():
+        raise RunonError(
+            "--ask-password was given and there is no terminal to ask on.\n"
+            "Give the host password_env or password_file in the inventory instead."
+        )
 
     if len(hosts) > 1:
         print(
@@ -830,7 +835,10 @@ def _password_for(args, hosts) -> str | None:
             "If they differ, run them separately — or use ssh-copy-id and stop typing it.",
             file=sys.stderr,
         )
-    password = getpass.getpass("SSH password: ")
+    try:
+        password = getpass.getpass("SSH password: ")
+    except EOFError:
+        raise Cancelled from None
     if not password:
         raise RunonError("no password entered")
     return password
