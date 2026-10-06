@@ -831,7 +831,7 @@ would be offered to you as a program name.
   one.
 
 ## Tests
-419 tests. No servers, no SSH keys, no network.
+422 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"
