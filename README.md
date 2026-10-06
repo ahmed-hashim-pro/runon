@@ -818,8 +818,11 @@ would be offered to you as a program name.
 
 - **No rollback, no idempotency, no desired-state model.** It runs your script.
   If you need convergence, you need Ansible or Chef, and you should use them.
-- **No secrets management.** Put credentials in your own vault and have the
-  program fetch them; `runon` never asks for or stores one.
+- **No secrets management.** `runon` asks for a secret when you pass
+  `--ask-password` or a prompt is marked `secret`, and `add-host` can keep an
+  SSH password as a plain `0600` file under `~/.runon/secrets`. That is all: no
+  vault, no encryption, no rotation. Put other credentials in your own vault and
+  have the program fetch them.
 - **No inventory discovery.** No cloud APIs, no dynamic inventory — you write
   the file.
 - **No output streaming in the collected path.** Results arrive when a host
@@ -828,14 +831,14 @@ would be offered to you as a program name.
   one.
 
 ## Tests
-126 tests. No servers, no SSH keys, no network.
+422 tests. No servers, no SSH keys, no network.
 
 ```bash
 pip install -e ".[dev]"
 pytest
 ```
 
-CI runs them on Linux and macOS across Python 3.11–3.13, then executes the
+CI runs them on Linux and macOS across Python 3.10–3.13, then executes the
 quickstart above from an empty directory — so `init` producing something that
 actually runs is checked on every commit, rather than being discovered by the
 first user.
