@@ -818,8 +818,11 @@ would be offered to you as a program name.
 
 - **No rollback, no idempotency, no desired-state model.** It runs your script.
   If you need convergence, you need Ansible or Chef, and you should use them.
-- **No secrets management.** Put credentials in your own vault and have the
-  program fetch them; `runon` never asks for or stores one.
+- **No secrets management.** `runon` asks for a secret when you pass
+  `--ask-password` or a prompt is marked `secret`, and `add-host` can keep an
+  SSH password as a plain `0600` file under `~/.runon/secrets`. That is all: no
+  vault, no encryption, no rotation. Put other credentials in your own vault and
+  have the program fetch them.
 - **No inventory discovery.** No cloud APIs, no dynamic inventory — you write
   the file.
 - **No output streaming in the collected path.** Results arrive when a host
